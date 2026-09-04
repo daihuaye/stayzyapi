@@ -9,7 +9,12 @@ from cryptography.hazmat.primitives.asymmetric import ec
 import pytest
 
 from app.config import Settings
-from app.jobs.build_voice_pack import catalog_version, load_phrases, validate_aac
+from app.jobs.build_voice_pack import (
+    DEFAULT_PHRASE_PATH,
+    catalog_version,
+    load_phrases,
+    validate_aac,
+)
 from app.services.sendgrid_webhook import verify_sendgrid_signature
 from app.services.storage import ObjectStorage
 
@@ -85,7 +90,25 @@ def test_storage_is_configured_when_required_values_are_present() -> None:
     storage = ObjectStorage(settings)
 
     assert storage.missing_configuration == ()
+    assert storage.invalid_configuration == ()
     assert storage.configured
+
+
+def test_storage_rejects_an_endpoint_in_the_bucket_name_field() -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        bucket="https://storage.railway.app",
+        bucket_access_key_id="access-key",
+        bucket_secret_access_key="secret-key",
+    )
+
+    storage = ObjectStorage(settings)
+
+    assert storage.invalid_configuration == (
+        "STAYZY_BUCKET must be the BUCKET or AWS_S3_BUCKET_NAME value, not a URL",
+    )
+    assert not storage.configured
 
 
 def test_sendgrid_signature_uses_timestamp_and_raw_payload() -> None:
@@ -113,6 +136,13 @@ def test_phrase_catalog_has_stable_unique_ids(tmp_path) -> None:
         {"id": "ready.custom", "text": "Welcome"},
     ]
     assert catalog_version(phrases) == catalog_version(phrases)
+
+
+def test_deployed_builder_contains_the_complete_phrase_catalog() -> None:
+    phrases = load_phrases(DEFAULT_PHRASE_PATH)
+
+    assert DEFAULT_PHRASE_PATH.is_file()
+    assert len(phrases) == 500
 
 
 def test_aac_validation_checks_frames_and_duration() -> None:

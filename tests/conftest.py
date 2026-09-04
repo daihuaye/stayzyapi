@@ -101,6 +101,8 @@ async def api_client(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> AsyncIterator[tuple[httpx.AsyncClient, FastAPI, FakeEmailSender, FakeStorage, FakeAppleVerifier]]:
     app = FastAPI()
+    from app.observability import install_diagnostics
+    install_diagnostics(app)
     app.include_router(health.router)
     app.include_router(links.router)
     app.include_router(auth.router)

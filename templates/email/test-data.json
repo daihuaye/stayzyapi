@@ -1,0 +1,5 @@
+{
+  "subject": "Your sign-in link for Stayzy",
+  "magic_link": "https://example.com/sign-in-preview",
+  "expires_minutes": 15
+}

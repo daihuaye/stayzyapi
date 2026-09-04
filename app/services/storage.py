@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -9,6 +10,7 @@ import boto3
 from botocore.config import Config
 
 from app.config import Settings
+from app.observability import emit, failure_fields
 
 
 class StorageUnavailable(RuntimeError):
@@ -35,8 +37,21 @@ class ObjectStorage:
         )
 
     @property
+    def invalid_configuration(self) -> tuple[str, ...]:
+        issues: list[str] = []
+        bucket = str(self.settings.bucket or "").strip()
+        endpoint = str(self.settings.bucket_endpoint or "").strip()
+        if "://" in bucket or "/" in bucket:
+            issues.append(
+                "STAYZY_BUCKET must be the BUCKET or AWS_S3_BUCKET_NAME value, not a URL"
+            )
+        if endpoint and not endpoint.startswith(("https://", "http://")):
+            issues.append("STAYZY_BUCKET_ENDPOINT must be an HTTP(S) URL")
+        return tuple(issues)
+
+    @property
     def configured(self) -> bool:
-        return not self.missing_configuration
+        return not self.missing_configuration and not self.invalid_configuration
 
     def _s3(self) -> Any:
         if not self.configured:
@@ -85,9 +100,12 @@ class ObjectStorage:
 
     async def ready(self) -> bool:
         if not self.configured:
+            emit("storage.not_configured", level=logging.ERROR,
+                 missing=list(self.missing_configuration), invalid=list(self.invalid_configuration))
             return False
         try:
             await asyncio.to_thread(self._s3().head_bucket, Bucket=self.settings.bucket)
             return True
-        except Exception:
+        except Exception as error:
+            emit("storage.readiness_failed", level=logging.ERROR, **failure_fields(error))
             return False

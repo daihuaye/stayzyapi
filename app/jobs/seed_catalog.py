@@ -16,13 +16,13 @@ VOICE_SEEDS = [
         "tier": "premium",
         "supported_locales": ["en-US"],
         "provider": "openai",
-        "provider_voice_id": "marin",
+        "provider_voice_id": "coral",
         "model": "gpt-4o-mini-tts-2025-12-15",
         "instructions": (
             "Speak warmly and calmly, with gentle confidence. Use a natural conversational "
             "pace, soft intonation, and short pauses. Avoid urgency or exaggerated enthusiasm."
         ),
-        "instruction_version": "warm-calm-v1",
+        "instruction_version": "warm-calm-v2-coral",
         "preview_object_key": "voice-previews/voice_willow/en-US/preview.aac",
         "status": "active",
         "sort_order": 10,
@@ -34,13 +34,13 @@ VOICE_SEEDS = [
         "tier": "premium",
         "supported_locales": ["en-US"],
         "provider": "openai",
-        "provider_voice_id": "cedar",
+        "provider_voice_id": "echo",
         "model": "gpt-4o-mini-tts-2025-12-15",
         "instructions": (
             "Speak with a grounded, reassuring tone. Keep a relaxed conversational pace, "
             "gentle emphasis, and comfortable pauses. Never sound urgent or theatrical."
         ),
-        "instruction_version": "grounded-v1",
+        "instruction_version": "grounded-v2-echo",
         "preview_object_key": "voice-previews/voice_harbor/en-US/preview.aac",
         "status": "active",
         "sort_order": 20,

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
+from app.observability import emit
 from app.db import get_db
 from app.errors import api_error
 from app.models import EmailDeliveryEvent, MagicLink
@@ -42,12 +43,15 @@ async def sendgrid_events(
     if not isinstance(events, list):
         raise api_error(400, "invalid_webhook", "The webhook payload must be an array.")
 
+    counts: dict[str, int] = {}
     for index, event in enumerate(events):
         if not isinstance(event, dict) or event.get("event") not in SUPPORTED_EVENTS:
             continue
         event_id = str(event.get("sg_event_id") or hashlib.sha256(payload + str(index).encode()).hexdigest())
         if await db.get(EmailDeliveryEvent, event_id) is not None:
             continue
+        kind = str(event["event"])
+        counts[kind] = counts.get(kind, 0) + 1
         message_id = event.get("sg_message_id")
         occurred_at = datetime.fromtimestamp(int(event.get("timestamp", 0)), UTC)
         db.add(
@@ -65,5 +69,6 @@ async def sendgrid_events(
             if challenge:
                 challenge.send_state = str(event["event"])
     await db.commit()
+    emit("email.delivery_events_processed", counts=counts)
     return Response(status_code=204)
 

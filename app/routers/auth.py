@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import logging
+
+from app.observability import emit, failure_fields
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -33,6 +36,7 @@ async def request_magic_link(
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, str]:
+    emit("auth.magic_link_requested")
     now = datetime.now(UTC)
     email = normalize_email(str(body.email))
     address_hash = hash_ip(client_ip(request), settings.rate_limit_salt)
@@ -49,6 +53,7 @@ async def request_magic_link(
         )
     )
     if (email_count or 0) >= 3 or (ip_count or 0) >= 10:
+        emit("auth.magic_link_throttled", reason="email_limit" if (email_count or 0) >= 3 else "ip_limit")
         # Keep a minimal audit record while returning the same response shape.
         # The synthetic token is never returned or sent and cannot authenticate.
         db.add(
@@ -81,9 +86,11 @@ async def request_magic_link(
         result = await sender.send_magic_link(email, magic_url, challenge.id)
         challenge.send_state = "accepted" if result.accepted else "failed"
         challenge.sendgrid_message_id = result.message_id
-    except Exception:
+    except Exception as error:
+        emit("auth.magic_link_send_exception", level=logging.ERROR, **failure_fields(error))
         challenge.send_state = "failed"
     await db.commit()
+    emit("auth.magic_link_processed", send_state=challenge.send_state)
     return {"status": "accepted"}
 
 

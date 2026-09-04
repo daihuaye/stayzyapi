@@ -20,6 +20,7 @@ from app.services.storage import ObjectStorage
 
 
 PREVIEW_TEXT = "One thing at a time. I'm right here with you."
+DEFAULT_PHRASE_PATH = Path(__file__).resolve().parents[1] / "assets" / "CompanionPhrases.json"
 
 
 class VoicePackConfigurationError(RuntimeError):
@@ -27,7 +28,12 @@ class VoicePackConfigurationError(RuntimeError):
 
 
 def load_phrases(path: Path) -> list[dict[str, str]]:
-    raw = json.loads(path.read_text())
+    try:
+        raw = json.loads(path.read_text())
+    except FileNotFoundError as error:
+        raise VoicePackConfigurationError(
+            f"Phrase catalog was not found at {path}. Pass --phrases with an existing path."
+        ) from error
     if not isinstance(raw, dict):
         raise ValueError("Phrase catalog must be an object")
     phrases: list[dict[str, str]] = []
@@ -123,6 +129,8 @@ async def build(
             "Bucket Credentials tab into .env, or add Railway variable references "
             "to the pack-builder service."
         )
+    if invalid := storage.invalid_configuration:
+        raise VoicePackConfigurationError("; ".join(invalid))
     phrases = load_phrases(phrase_path)
     if len(phrases) < 500:
         raise ValueError(f"Expected at least 500 phrases, found {len(phrases)}")
@@ -233,7 +241,7 @@ def main() -> None:
     parser.add_argument(
         "--phrases",
         type=Path,
-        default=Path(__file__).parents[3] / "stayzy" / "Companion" / "Assets" / "CompanionPhrases.json",
+        default=DEFAULT_PHRASE_PATH,
     )
     parser.add_argument("--version", default=datetime.now(UTC).strftime("%Y.%m.%d.%H%M"))
     parser.add_argument(
