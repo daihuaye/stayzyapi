@@ -5,6 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+COPY certs ./certs
 COPY pyproject.toml ./
 COPY app ./app
 COPY alembic.ini ./
