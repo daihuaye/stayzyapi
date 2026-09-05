@@ -46,14 +46,17 @@ class Settings(BaseSettings):
     presigned_url_seconds: int = 300
 
     openai_api_key: str | None = None
-    apple_bundle_id: str = "com.daihuaye.stayzy"
+    apple_bundle_id: str = "com.vistasolutions.stayzy"
+    apple_api_key_id: str | None = None
+    apple_api_issuer_id: str | None = None
+    apple_api_private_key: str | None = None
     apple_team_id: str | None = None
     apple_app_id: int | None = None
     apple_environment: Literal["Sandbox", "Production"] = "Sandbox"
     apple_root_certificate_paths: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
-    monthly_product_id: str = "com.daihuaye.stayzy.premium.monthly"
-    lifetime_product_id: str = "com.daihuaye.stayzy.premium.lifetime"
+    monthly_product_id: str = "com.vistasolutions.stayzy.premium.monthly"
+    lifetime_product_id: str = "com.vistasolutions.stayzy.premium.lifetime"
 
     @field_validator("database_url", mode="before")
     @classmethod
@@ -85,7 +88,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> Settings:
-        if self.environment == "production":
+        if self.environment in {"production", "staging"}:
+            expected = "Production" if self.environment == "production" else "Sandbox"
+            if self.apple_environment != expected:
+                raise ValueError(f"{self.environment} requires Apple {expected} verification")
             if not self.database_url.startswith("postgresql+asyncpg://"):
                 raise ValueError("Production requires a PostgreSQL database URL")
             required = {
@@ -97,6 +103,9 @@ class Settings(BaseSettings):
                 "bucket": self.bucket,
                 "bucket_access_key_id": self.bucket_access_key_id,
                 "bucket_secret_access_key": self.bucket_secret_access_key,
+                "apple_api_key_id": self.apple_api_key_id,
+                "apple_api_issuer_id": self.apple_api_issuer_id,
+                "apple_api_private_key": self.apple_api_private_key,
                 "apple_team_id": self.apple_team_id,
                 "apple_app_id": self.apple_app_id,
                 "apple_root_certificate_paths": self.apple_root_certificate_paths,

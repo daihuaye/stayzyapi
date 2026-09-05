@@ -1,0 +1,9 @@
+# Select this config file for the separate staging service only.
+[build]
+builder = "DOCKERFILE"
+
+[deploy]
+preDeployCommand = "alembic upgrade head"
+healthcheckPath = "/health/ready"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

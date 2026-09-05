@@ -65,6 +65,9 @@ class FakeAppleVerifier:
         assert self.transaction is not None
         return self.transaction
 
+    async def reconcile_transaction(self, transaction: VerifiedStoreTransaction) -> VerifiedStoreTransaction:
+        return transaction
+
     async def verify_notification(self, _: str) -> VerifiedNotification:
         assert self.notification is not None
         return self.notification

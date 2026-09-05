@@ -4,6 +4,7 @@ from __future__ import annotations
 async def test_aasa_uses_configured_team_and_bundle(api_client, settings) -> None:
     client, _, _, _, _ = api_client
     settings.apple_team_id = "ABCD123456"
+    settings.apple_bundle_id = "com.vistasolutions.stayzy"
 
     response = await client.get("/.well-known/apple-app-site-association")
 
@@ -11,7 +12,7 @@ async def test_aasa_uses_configured_team_and_bundle(api_client, settings) -> Non
     assert response.headers["content-type"].startswith("application/json")
     assert response.json()["applinks"]["details"] == [
         {
-            "appID": "ABCD123456.com.daihuaye.stayzy",
+            "appID": "ABCD123456.com.vistasolutions.stayzy",
             "components": [
                 {"/": "/auth/verify", "comment": "Stayzy passwordless sign-in"}
             ],
