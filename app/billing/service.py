@@ -48,7 +48,6 @@ async def _save_transaction(
             expires_at=verified.expires_at,
             revoked_at=verified.revoked_at,
             apple_signed_at=verified.signed_at,
-            billing_grace_expires_at=verified.billing_grace_expires_at,
         )
         db.add(item)
     else:
@@ -64,7 +63,6 @@ async def _save_transaction(
         item.expires_at = verified.expires_at
         item.revoked_at = item.revoked_at or verified.revoked_at
         item.apple_signed_at = verified.signed_at or item.apple_signed_at
-        item.billing_grace_expires_at = verified.billing_grace_expires_at
     return item
 
 
@@ -84,7 +82,7 @@ async def verify_store_transaction(
     except AppleVerificationFailed as error:
         raise api_error(400, "invalid_transaction", "The purchase could not be verified.") from error
 
-    if verified.product_id not in {settings.monthly_product_id, settings.lifetime_product_id, settings.trial_product_id}:
+    if verified.product_id not in {settings.lifetime_product_id, settings.trial_product_id}:
         raise api_error(400, "invalid_transaction", "The product is not recognized.")
     if verified.environment != settings.apple_environment:
         raise api_error(400, "wrong_environment", "The purchase belongs to another environment.")
@@ -98,7 +96,7 @@ async def verify_store_transaction(
         raise api_error(400, "invalid_transaction", "The purchase could not be verified.") from error
     if (verified.original_transaction_id != lineage
             or verified.environment != settings.apple_environment
-            or verified.product_id not in {settings.monthly_product_id, settings.lifetime_product_id, settings.trial_product_id}):
+            or verified.product_id not in {settings.lifetime_product_id, settings.trial_product_id}):
         raise api_error(400, "invalid_transaction", "The purchase does not match this app.")
     existing = await db.scalar(
         select(StoreTransaction).where(
@@ -140,7 +138,7 @@ async def app_store_webhook(
 
     affected_user_id: str | None = None
     if notification.transaction:
-        if notification.transaction.environment != settings.apple_environment or notification.transaction.product_id not in {settings.monthly_product_id, settings.lifetime_product_id, settings.trial_product_id}:
+        if notification.transaction.environment != settings.apple_environment or notification.transaction.product_id not in {settings.lifetime_product_id, settings.trial_product_id}:
             raise api_error(400, "invalid_notification", "The notification does not match this app environment.")
         await lock_purchase(db, f"{notification.transaction.environment}:{notification.transaction.original_transaction_id}")
         existing = await db.scalar(
@@ -164,18 +162,6 @@ async def app_store_webhook(
             item.revoked_at = item.revoked_at or datetime.now(UTC)
         elif item.revoked_at is not None:
             item.status = "revoked"
-        elif notification.notification_type in {"EXPIRED", "GRACE_PERIOD_EXPIRED"}:
-            item.status = "expired"
-        elif notification.notification_type == "DID_FAIL_TO_RENEW":
-            grace_end = notification.grace_period_expires_at
-            if notification.subtype == "GRACE_PERIOD" and grace_end is not None:
-                item.status = "grace"
-                item.billing_grace_expires_at = grace_end
-            else:
-                # Billing retry without Apple's grace period cannot authorize a
-                # new download. The local seven-day playback grace is derived
-                # separately from the last verified transaction expiration.
-                item.status = "expired"
 
     db.add(WebhookReceipt(id=notification.notification_id, provider="app_store"))
     await db.flush()
@@ -194,6 +180,8 @@ async def reconcile_account(db: AsyncSession, user: User, settings: Settings, si
         if item.original_transaction_id not in latest or item.purchased_at > latest[item.original_transaction_id].purchased_at:
             latest[item.original_transaction_id] = item
     for item in sorted(latest.values(), key=lambda value: value.original_transaction_id):
+        if item.product_id not in {settings.trial_product_id, settings.lifetime_product_id}:
+            continue
         if item.revoked_at is not None:
             continue  # A recorded revocation never depends on Apple availability.
         await lock_purchase(db, f"{item.environment}:{item.original_transaction_id}")
@@ -201,14 +189,14 @@ async def reconcile_account(db: AsyncSession, user: User, settings: Settings, si
             user.id, item.environment, item.purchased_at.replace(tzinfo=UTC),
             item.expires_at.replace(tzinfo=UTC) if item.expires_at else None,
             item.revoked_at.replace(tzinfo=UTC) if item.revoked_at else None,
-            signed_at=item.apple_signed_at, billing_grace_expires_at=item.billing_grace_expires_at)
+            signed_at=item.apple_signed_at)
         try:
             fresh = await verifier.reconcile_transaction(snapshot)
         except (AppleVerificationUnavailable, AppleVerificationFailed) as error:
             raise api_error(503, "verification_unavailable", "Premium status could not be refreshed.") from error
         if (fresh.original_transaction_id != item.original_transaction_id
                 or fresh.environment != settings.apple_environment
-                or fresh.product_id not in {settings.monthly_product_id, settings.lifetime_product_id, settings.trial_product_id}):
+                or fresh.product_id not in {settings.lifetime_product_id, settings.trial_product_id}):
             raise api_error(503, "verification_unavailable", "Premium status could not be refreshed.")
         # The locked ledger owns this lineage, including explicit restoration
         # after account deletion. Apple retains the original account token.

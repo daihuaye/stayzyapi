@@ -37,9 +37,6 @@ async def entitlement_state(db: AsyncSession, user_id: str, settings: Settings) 
             select(StoreTransaction).where(
                 StoreTransaction.user_id == user_id,
                 StoreTransaction.environment == settings.apple_environment,
-                # Expired monthly transactions still define the seven-day local
-                # playback grace. Refunds and revocations are excluded above.
-
             )
         )
     )
@@ -49,7 +46,7 @@ async def entitlement_state(db: AsyncSession, user_id: str, settings: Settings) 
         old = latest.get(item.original_transaction_id)
         if old is None or _aware(item.purchased_at) > _aware(old.purchased_at):
             latest[item.original_transaction_id] = item
-    transactions = [item for item in latest.values() if item.revoked_at is None and item.status in {"active", "grace", "expired"}]
+    transactions = [item for item in latest.values() if item.revoked_at is None and item.status in {"active", "expired"}]
 
     lifetime = next(
         (item for item in transactions if item.product_id == settings.lifetime_product_id),
@@ -63,28 +60,11 @@ async def entitlement_state(db: AsyncSession, user_id: str, settings: Settings) 
             offline_until=now + timedelta(days=3650),
         )
 
-    monthly_expirations = [
-        expiry
-        for item in transactions
-        if item.product_id == settings.monthly_product_id
-        if (expiry := _aware(item.expires_at)) is not None
-    ]
     trial_starts = [
         _aware(item.purchased_at) for item in transactions
         if item.product_id == settings.trial_product_id
     ]
     trial_end = min(trial_starts) + timedelta(days=7) if trial_starts else None
-
-    if monthly_expirations:
-        valid_until = max(monthly_expirations)
-        offline_until = valid_until + timedelta(days=settings.offline_grace_days)
-        billing_grace = max((_aware(item.billing_grace_expires_at) for item in transactions
-                             if item.product_id == settings.monthly_product_id and item.billing_grace_expires_at), default=valid_until)
-        access_until = max(valid_until, billing_grace)
-        offline_until = max(offline_until, access_until)
-        status = "active" if now <= access_until else "grace" if now <= offline_until else "inactive"
-        if status == "active" or trial_end is None or now >= trial_end:
-            return EntitlementState(status, "monthly", access_until, offline_until)
 
     if trial_end is not None:
         return EntitlementState("active" if now < trial_end else "inactive", "trial", trial_end, trial_end)

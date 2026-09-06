@@ -30,7 +30,6 @@ class Settings(BaseSettings):
     access_token_minutes: int = 15
     refresh_token_days: int = 30
     recent_authentication_minutes: int = 10
-    offline_grace_days: int = 7
     rate_limit_salt: str = "development-rate-limit-salt"
 
     sendgrid_api_key: str | None = None
@@ -55,7 +54,6 @@ class Settings(BaseSettings):
     apple_environment: Literal["Sandbox", "Production"] = "Sandbox"
     apple_root_certificate_paths: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
-    monthly_product_id: str = "com.vistasolutions.stayzy.premium.monthly"
     trial_product_id: str = "com.vistasolutions.stayzy.trial.seven_days"
     lifetime_product_id: str = "com.vistasolutions.stayzy.premium.lifetime"
 

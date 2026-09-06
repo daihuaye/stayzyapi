@@ -16,7 +16,8 @@ from app.services.storage import ObjectStorage
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    emit("service.started", email_key_configured=bool(settings.sendgrid_api_key),
+    emit("service.started", environment=settings.environment,
+         apple_environment=settings.apple_environment, email_key_configured=bool(settings.sendgrid_api_key),
          email_template_configured=bool(settings.sendgrid_magic_link_template_id),
          email_sender_configured=bool(settings.sendgrid_from_email),
          email_webhook_configured=bool(settings.sendgrid_webhook_public_key),

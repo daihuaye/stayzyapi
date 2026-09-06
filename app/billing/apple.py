@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,7 +29,6 @@ class VerifiedStoreTransaction:
     expires_at: datetime | None
     revoked_at: datetime | None
     signed_at: datetime | None = None
-    billing_grace_expires_at: datetime | None = None
 
     @property
     def status(self) -> str:
@@ -46,8 +45,6 @@ class VerifiedNotification:
     notification_type: str
     subtype: str | None
     transaction: VerifiedStoreTransaction | None
-    grace_period_expires_at: datetime | None = None
-    is_in_billing_retry_period: bool | None = None
     signed_at: datetime | None = None
 
 
@@ -122,22 +119,6 @@ class AppleStoreVerifier:
             signed_transaction = getattr(data, "signedTransactionInfo", None) if data else None
             if signed_transaction:
                 transaction = await self.verify_transaction(signed_transaction)
-            grace_period_expires_at = None
-            is_in_billing_retry_period = None
-            signed_renewal = getattr(data, "signedRenewalInfo", None) if data else None
-            if signed_renewal:
-                renewal = await asyncio.to_thread(
-                    verifier.verify_and_decode_renewal_info,
-                    signed_renewal,
-                )
-                grace_period_expires_at = _milliseconds(
-                    getattr(renewal, "gracePeriodExpiresDate", None)
-                )
-                is_in_billing_retry_period = getattr(
-                    renewal,
-                    "isInBillingRetryPeriod",
-                    None,
-                )
             notification_id = _text(getattr(decoded, "notificationUUID", None))
             if not notification_id:
                 notification_id = hashlib.sha256(signed_payload.encode("utf-8")).hexdigest()
@@ -146,8 +127,6 @@ class AppleStoreVerifier:
                 notification_type=_text(getattr(decoded, "notificationType", None)) or "UNKNOWN",
                 subtype=_text(getattr(decoded, "subtype", None)),
                 transaction=transaction,
-                grace_period_expires_at=grace_period_expires_at,
-                is_in_billing_retry_period=is_in_billing_retry_period,
                 signed_at=_milliseconds(getattr(decoded, "signedDate", None)),
             )
         except (AppleVerificationUnavailable, AppleVerificationFailed):
@@ -172,21 +151,6 @@ class AppleStoreVerifier:
             fresh = await self.verify_transaction(info.signedTransactionInfo)
             if fresh.original_transaction_id != transaction.original_transaction_id or fresh.environment != transaction.environment:
                 raise AppleVerificationFailed("Transaction lineage mismatch")
-            if fresh.product_id == self.settings.monthly_product_id:
-                statuses = await client.get_all_subscription_statuses(fresh.transaction_id)
-                candidates = []
-                for group in statuses.data or []:
-                    for entry in group.lastTransactions or []:
-                        item = await self.verify_transaction(entry.signedTransactionInfo)
-                        if item.original_transaction_id != fresh.original_transaction_id:
-                            continue
-                        grace = None
-                        if entry.signedRenewalInfo:
-                            renewal = await asyncio.to_thread(self._build_verifier().verify_and_decode_renewal_info, entry.signedRenewalInfo)
-                            grace = _milliseconds(getattr(renewal, "gracePeriodExpiresDate", None))
-                        candidates.append(replace(item, billing_grace_expires_at=grace))
-                if candidates:
-                    fresh = max(candidates, key=lambda value: value.purchased_at)
             return fresh
         except AppleVerificationFailed:
             raise

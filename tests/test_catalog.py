@@ -93,11 +93,11 @@ async def test_active_premium_can_download_pack(api_client, session_factory, set
                 original_transaction_id="original-1",
                 user_id=claims.user_id,
                 billing_subject="subject",
-                product_id=settings.monthly_product_id,
+                product_id=settings.lifetime_product_id,
                 environment="Sandbox",
                 status="active",
                 purchased_at=now,
-                expires_at=now + timedelta(days=30),
+                expires_at=None,
             )
         )
         await db.commit()
@@ -131,7 +131,7 @@ async def test_active_premium_can_download_pack(api_client, session_factory, set
     assert "signature=private" not in json.dumps(logs)
 
 
-async def test_expired_subscription_grace_allows_playback_but_not_download(
+async def test_expired_trial_denies_download(
     api_client,
     session_factory,
     settings,
@@ -148,7 +148,7 @@ async def test_expired_subscription_grace_allows_playback_but_not_download(
                 original_transaction_id="original-grace",
                 user_id=claims.user_id,
                 billing_subject="subject",
-                product_id=settings.monthly_product_id,
+                product_id=settings.trial_product_id,
                 environment="Sandbox",
                 status="expired",
                 purchased_at=now - timedelta(days=31),
@@ -159,7 +159,7 @@ async def test_expired_subscription_grace_allows_playback_but_not_download(
     headers = {"Authorization": f"Bearer {signed_in['access_token']}"}
 
     entitlement = await client.get("/v1/entitlements", headers=headers)
-    assert entitlement.json()["status"] == "grace"
+    assert entitlement.json()["status"] == "inactive"
     download = await client.post(
         "/v1/voice-packs/voice_willow/download",
         headers=headers,

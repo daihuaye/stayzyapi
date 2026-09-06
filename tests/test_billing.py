@@ -17,14 +17,15 @@ async def test_recorded_revocation_cannot_be_erased(session_factory, settings):
         assert item.status == 'revoked'
         assert item.revoked_at is not None
 
-async def test_old_signed_update_cannot_shorten_newer_period(session_factory, settings):
+async def test_old_signed_update_cannot_revoke_newer_transaction(session_factory, settings):
     now = datetime.now(UTC)
-    tx = VerifiedStoreTransaction('ordered', 'ordered-lineage', settings.monthly_product_id, None, 'Sandbox', now, now+timedelta(days=30), None, signed_at=now)
+    tx = VerifiedStoreTransaction('ordered', 'ordered-lineage', settings.lifetime_product_id, None, 'Sandbox', now, None, None, signed_at=now)
     async with session_factory() as db:
         await _save_transaction(db, tx, settings, None)
         await db.flush()
-        item = await _save_transaction(db, replace(tx, expires_at=now-timedelta(days=1), signed_at=now-timedelta(minutes=1)), settings, None)
-        assert item.expires_at.replace(tzinfo=UTC) > now
+        item = await _save_transaction(db, replace(tx, revoked_at=now, signed_at=now-timedelta(minutes=1)), settings, None)
+        assert item.status == 'active'
+        assert item.revoked_at is None
 
 async def test_wrong_environment_rejected(api_client, settings):
     client, _, mail, _, apple = api_client
@@ -40,7 +41,7 @@ async def test_latest_refund_supersedes_older_period(api_client, session_factory
     account = (await client.get('/v1/me',headers={'Authorization': 'Bearer '+tokens['access_token']})).json()['id']
     now = datetime.now(UTC)
     async with session_factory() as db:
-        old = VerifiedStoreTransaction('old-paid', 'renewed-lineage', settings.monthly_product_id, account, 'Sandbox', now-timedelta(days=1), now+timedelta(days=29), None)
+        old = VerifiedStoreTransaction('old-paid', 'renewed-lineage', settings.lifetime_product_id, account, 'Sandbox', now-timedelta(days=1), None, None)
         new = replace(old, transaction_id='refunded-new', purchased_at=now, revoked_at=now)
         await _save_transaction(db, old, settings, account)
         await _save_transaction(db, new, settings, account)
@@ -66,23 +67,25 @@ async def test_deleted_account_restoration_stays_owned(api_client, settings):
         assert restored.json()['plan'] == 'lifetime'
     assert (await client.get('/v1/entitlements', headers=other)).json()['status'] == 'active'
 
-async def test_apple_status_reconciles_latest_subscription(monkeypatch, settings):
+async def test_apple_reconciliation_refreshes_non_consumable(monkeypatch, settings):
     from types import SimpleNamespace as NS
     from app.billing.apple import AppleStoreVerifier
     import appstoreserverlibrary.api_client as apple_api
     now = datetime.now(UTC)
-    old = VerifiedStoreTransaction('original', 'lineage-api', settings.monthly_product_id, None, 'Sandbox', now-timedelta(days=30), now, None)
-    renewed = replace(old, transaction_id='renewed', purchased_at=now, expires_at=now+timedelta(days=30))
+    old = VerifiedStoreTransaction('original', 'lineage-api', settings.lifetime_product_id, None, 'Sandbox', now, None, None)
+    refunded = replace(old, revoked_at=now, signed_at=now)
     closed = []
     class Client:
         def __init__(self, *args): pass
-        async def get_transaction_info(self, identifier): return NS(signedTransactionInfo='old')
-        async def get_all_subscription_statuses(self, identifier):
-            return NS(data=[NS(lastTransactions=[NS(signedTransactionInfo='new', signedRenewalInfo=None)])])
+        async def get_transaction_info(self, identifier):
+            assert identifier == old.transaction_id
+            return NS(signedTransactionInfo='fresh')
         async def async_close(self): closed.append(True)
     monkeypatch.setattr(apple_api, 'AsyncAppStoreServerAPIClient', Client)
     verifier = AppleStoreVerifier(settings.model_copy(update={'apple_api_key_id': 'test', 'apple_api_issuer_id': 'test', 'apple_api_private_key': 'test'}))
-    async def verify(payload): return old if payload == 'old' else renewed
+    async def verify(payload):
+        assert payload == 'fresh'
+        return refunded
     monkeypatch.setattr(verifier, 'verify_transaction', verify)
-    assert await verifier.reconcile_transaction(old) == renewed
+    assert await verifier.reconcile_transaction(old) == refunded
     assert closed == [True]
