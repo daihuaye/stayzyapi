@@ -79,6 +79,33 @@ validates completeness, uploads an immutable archive and manifest, and switches
 the active database version transactionally. The OpenAI key belongs only on this
 job, not on the iOS client or FastAPI web service.
 
+## Recover uploaded packs missing from the API catalog
+
+`pack_version: null` and `download_bytes: null` mean the API database has no active
+pack record for that voice and locale. Uploading to the bucket or passing builder
+preflight does not create a record in another database. A local `.env` can point
+the builder at SQLite while Railway uses PostgreSQL.
+
+To recover an existing upload without generating speech again, run the registration
+job inside the API's Railway environment after deploying this source. Retain the
+API's `STAYZY_DATABASE_URL` and bucket configuration. No OpenAI key is needed.
+
+```bash
+python -m app.jobs.register_voice_pack --voice-id voice_harbor --locale en-US --manifest-key voice-packs/voice_harbor/en-US/3414ec190c3df9a4/2026.09.06.2215/manifest.json
+python -m app.jobs.register_voice_pack --voice-id voice_willow --locale en-US --manifest-key voice-packs/voice_willow/en-US/3414ec190c3df9a4/2026.09.04.2101/manifest.json
+```
+
+These are the existing uploads verified on 2026-09-06; use the appropriate manifest
+key for later versions. Add `--check-only` to verify files without writing records.
+Registration checks the archive format, phrase completeness, manifest identity,
+file lengths, and SHA-256 checksums, then activates the version transactionally.
+Repeated registration is safe; an existing version with different bytes is rejected.
+Writes to SQLite are refused so a local run cannot appear to repair Railway.
+
+Verify `GET /v1/catalog/voices?locale=en-US` returns a non-null `pack_version` and
+positive `download_bytes`. Then perform an authenticated download from the app.
+The catalog's `is_locked` can remain true when viewed without signing in.
+
 ## Deployment
 
 Connect Railway to this repository root. `railway.toml` builds the root

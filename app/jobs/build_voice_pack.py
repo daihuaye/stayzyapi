@@ -12,6 +12,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 from sqlalchemy import select, update
+from sqlalchemy.engine import make_url
 
 from app.config import get_settings
 from app.db import SessionFactory
@@ -117,6 +118,10 @@ async def build(
     preflight_only: bool = False,
 ) -> None:
     settings = get_settings()
+    target = make_url(settings.database_url)
+    print(f"Pack metadata destination: {target.drivername}; host={target.host or 'local'}; database={target.database}", flush=True)
+    if target.get_backend_name() == "sqlite":
+        print("Local SQLite: this job will NOT publish pack records to the hosted API. For Railway downloads, run against the API's PostgreSQL database.", flush=True)
     if not settings.openai_api_key:
         raise VoicePackConfigurationError(
             "STAYZY_OPENAI_API_KEY is required for the pack-builder job"
@@ -230,6 +235,7 @@ async def build(
                 pack.status = "active"
                 voice.preview_object_key = preview_key
                 await db.commit()
+                print(f"Published {voice.id} ({locale}): pack_version={version}, download_bytes={len(archive_bytes)}", flush=True)
         finally:
             await client.close()
 
