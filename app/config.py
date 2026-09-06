@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     apple_root_certificate_paths: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     monthly_product_id: str = "com.vistasolutions.stayzy.premium.monthly"
+    trial_product_id: str = "com.vistasolutions.stayzy.trial.seven_days"
     lifetime_product_id: str = "com.vistasolutions.stayzy.premium.lifetime"
 
     @field_validator("database_url", mode="before")

@@ -33,7 +33,7 @@ class TokenResponse(BaseModel):
 class EntitlementResponse(BaseModel):
     feature: Literal["premium_all"] = "premium_all"
     status: Literal["active", "inactive", "grace"]
-    plan: Literal["monthly", "lifetime"] | None
+    plan: Literal["trial", "monthly", "lifetime"] | None
     valid_until: datetime | None
     offline_until: datetime | None
     signed_entitlement: str

@@ -84,7 +84,7 @@ async def verify_store_transaction(
     except AppleVerificationFailed as error:
         raise api_error(400, "invalid_transaction", "The purchase could not be verified.") from error
 
-    if verified.product_id not in {settings.monthly_product_id, settings.lifetime_product_id}:
+    if verified.product_id not in {settings.monthly_product_id, settings.lifetime_product_id, settings.trial_product_id}:
         raise api_error(400, "invalid_transaction", "The product is not recognized.")
     if verified.environment != settings.apple_environment:
         raise api_error(400, "wrong_environment", "The purchase belongs to another environment.")
@@ -98,7 +98,7 @@ async def verify_store_transaction(
         raise api_error(400, "invalid_transaction", "The purchase could not be verified.") from error
     if (verified.original_transaction_id != lineage
             or verified.environment != settings.apple_environment
-            or verified.product_id not in {settings.monthly_product_id, settings.lifetime_product_id}):
+            or verified.product_id not in {settings.monthly_product_id, settings.lifetime_product_id, settings.trial_product_id}):
         raise api_error(400, "invalid_transaction", "The purchase does not match this app.")
     existing = await db.scalar(
         select(StoreTransaction).where(
@@ -109,7 +109,8 @@ async def verify_store_transaction(
     if existing is not None and existing.user_id not in {None, user.id}:
         raise api_error(409, "purchase_already_linked", "The purchase is linked to another account.")
     already_owned = existing is not None and existing.user_id == user.id
-    if verified.app_account_token != user.id and not (reclaiming_deleted_purchase or already_owned):
+    guest_trial = verified.product_id == settings.trial_product_id and verified.app_account_token is None
+    if verified.app_account_token != user.id and not (guest_trial or reclaiming_deleted_purchase or already_owned):
         raise api_error(400, "invalid_transaction", "The purchase belongs to another account.")
 
     await _save_transaction(db, verified, settings, user.id)
@@ -139,7 +140,7 @@ async def app_store_webhook(
 
     affected_user_id: str | None = None
     if notification.transaction:
-        if notification.transaction.environment != settings.apple_environment or notification.transaction.product_id not in {settings.monthly_product_id, settings.lifetime_product_id}:
+        if notification.transaction.environment != settings.apple_environment or notification.transaction.product_id not in {settings.monthly_product_id, settings.lifetime_product_id, settings.trial_product_id}:
             raise api_error(400, "invalid_notification", "The notification does not match this app environment.")
         await lock_purchase(db, f"{notification.transaction.environment}:{notification.transaction.original_transaction_id}")
         existing = await db.scalar(
@@ -207,7 +208,7 @@ async def reconcile_account(db: AsyncSession, user: User, settings: Settings, si
             raise api_error(503, "verification_unavailable", "Premium status could not be refreshed.") from error
         if (fresh.original_transaction_id != item.original_transaction_id
                 or fresh.environment != settings.apple_environment
-                or fresh.product_id not in {settings.monthly_product_id, settings.lifetime_product_id}):
+                or fresh.product_id not in {settings.monthly_product_id, settings.lifetime_product_id, settings.trial_product_id}):
             raise api_error(503, "verification_unavailable", "Premium status could not be refreshed.")
         # The locked ledger owns this lineage, including explicit restoration
         # after account deletion. Apple retains the original account token.

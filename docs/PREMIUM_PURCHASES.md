@@ -1,3 +1,6 @@
+> Current pricing and trial rollout: see [Trial and unlock](TRIAL_AND_UNLOCK.md).
+> The earlier pricing below is retained as historical implementation context.
+
 # Premium implementation and Sandbox runbook
 
 ## Module ownership

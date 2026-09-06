@@ -199,7 +199,8 @@ class AppleStoreVerifier:
         transaction_id = _text(getattr(decoded, "transactionId", None))
         original_id = _text(getattr(decoded, "originalTransactionId", None))
         product_id = _text(getattr(decoded, "productId", None))
-        purchased_at = _milliseconds(getattr(decoded, "purchaseDate", None))
+        purchased_at = _milliseconds(getattr(decoded,
+            "originalPurchaseDate" if product_id == self.settings.trial_product_id else "purchaseDate", None))
         if not transaction_id or not original_id or not product_id or not purchased_at:
             raise AppleVerificationFailed("Apple transaction is missing required claims")
         return VerifiedStoreTransaction(

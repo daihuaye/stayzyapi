@@ -69,6 +69,12 @@ async def entitlement_state(db: AsyncSession, user_id: str, settings: Settings) 
         if item.product_id == settings.monthly_product_id
         if (expiry := _aware(item.expires_at)) is not None
     ]
+    trial_starts = [
+        _aware(item.purchased_at) for item in transactions
+        if item.product_id == settings.trial_product_id
+    ]
+    trial_end = min(trial_starts) + timedelta(days=7) if trial_starts else None
+
     if monthly_expirations:
         valid_until = max(monthly_expirations)
         offline_until = valid_until + timedelta(days=settings.offline_grace_days)
@@ -77,8 +83,11 @@ async def entitlement_state(db: AsyncSession, user_id: str, settings: Settings) 
         access_until = max(valid_until, billing_grace)
         offline_until = max(offline_until, access_until)
         status = "active" if now <= access_until else "grace" if now <= offline_until else "inactive"
-        return EntitlementState(status, "monthly", access_until, offline_until)
+        if status == "active" or trial_end is None or now >= trial_end:
+            return EntitlementState(status, "monthly", access_until, offline_until)
 
+    if trial_end is not None:
+        return EntitlementState("active" if now < trial_end else "inactive", "trial", trial_end, trial_end)
     return EntitlementState("inactive", None, None, None)
 
 
