@@ -10,6 +10,7 @@ from app.config import Settings, get_settings
 from app.db import get_db
 from app.dependencies import optional_claims, require_user
 from app.errors import api_error
+from app.observability import emit
 from app.models import AuthSession, CompanionDefinition, User, VoiceDefinition, VoicePackVersion
 from app.schemas import (
     CompanionCatalogItem,
@@ -137,12 +138,15 @@ async def authorize_voice_pack_download(
     settings: Settings = Depends(get_settings),
 ) -> VoicePackDownloadResponse:
     state = await entitlement_state(db, user.id, settings)
+    emit("voice_download.entitlement_checked", allowed=state.permits_download,
+         status=state.status, plan=state.plan)
     if not state.permits_download:
         raise api_error(403, "premium_required", "An active Premium purchase is required.")
     definition = await db.scalar(
         select(VoiceDefinition).where(VoiceDefinition.id == voice_id, VoiceDefinition.status == "active")
     )
     if definition is None or body.locale not in definition.supported_locales:
+        emit("voice_download.pack_unavailable", reason="definition_or_locale")
         raise api_error(404, "voice_pack_unavailable", "This voice pack is unavailable.")
     pack = await db.scalar(
         select(VoicePackVersion)
@@ -154,13 +158,17 @@ async def authorize_voice_pack_download(
         .order_by(VoicePackVersion.created_at.desc())
     )
     if pack is None:
+        emit("voice_download.pack_unavailable", reason="no_active_pack")
         raise api_error(404, "voice_pack_unavailable", "This voice pack is unavailable.")
+    emit("voice_download.pack_available")
     storage: ObjectStorage = request.app.state.storage
     try:
         archive_url, expires_at = await storage.presign_get(pack.archive_object_key)
         manifest = await storage.get_json(pack.manifest_object_key)
     except Exception as error:
+        emit("voice_download.storage_authorization", outcome="failed")
         raise api_error(503, "storage_unavailable", "The voice pack is temporarily unavailable.") from error
+    emit("voice_download.storage_authorization", outcome="authorized")
     return VoicePackDownloadResponse(
         voice_id=voice_id,
         locale=body.locale,

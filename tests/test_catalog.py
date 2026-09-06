@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
+import pytest
 
 from sqlalchemy import select
 
@@ -77,7 +79,8 @@ async def test_catalog_is_provider_neutral_and_locked_for_guests(api_client, ses
     assert [item["is_locked"] for item in companions.json()["companions"]] == [False, True]
 
 
-async def test_active_premium_can_download_pack(api_client, session_factory, settings) -> None:
+@pytest.mark.parametrize("storage_available", [True, False])
+async def test_active_premium_can_download_pack(api_client, session_factory, settings, caplog, storage_available) -> None:
     client, _, email, storage, _ = api_client
     await seed_catalog(session_factory)
     signed_in = await sign_in(client, email)
@@ -107,14 +110,25 @@ async def test_active_premium_can_download_pack(api_client, session_factory, set
 
     catalog = await client.get("/v1/catalog/voices?locale=en-US", headers=headers)
     assert catalog.json()["voices"][0]["is_locked"] is False
+    storage.available = storage_available
+    headers["XCorrelationId"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     download = await client.post(
         "/v1/voice-packs/voice_willow/download",
         headers=headers,
         json={"locale": "en-US"},
     )
-    assert download.status_code == 200
-    assert download.json()["sha256"] == "a" * 64
-    assert "signature=private" in download.json()["archive_url"]
+    assert download.status_code == (200 if storage_available else 503)
+    if storage_available:
+        assert download.json()["sha256"] == "a" * 64
+        assert "signature=private" in download.json()["archive_url"]
+    logs = [json.loads(r.message) for r in caplog.records if r.name == "stayzy.api"]
+    logs = [e for e in logs if e["request_id"] == download.headers["x-request-id"]]
+    assert all(e["correlation_id"] == headers["XCorrelationId"] for e in logs)
+    assert any(e["event"] == "voice_download.entitlement_checked" and e["allowed"] for e in logs)
+    assert any(e["event"] == "voice_download.pack_available" for e in logs)
+    assert any(e["event"] == "voice_download.storage_authorization"
+               and e["outcome"] == ("authorized" if storage_available else "failed") for e in logs)
+    assert "signature=private" not in json.dumps(logs)
 
 
 async def test_expired_subscription_grace_allows_playback_but_not_download(

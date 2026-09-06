@@ -136,3 +136,35 @@ Never enable raw HTTP/SQL debug logging in production. These diagnostics exclude
 emails, credentials, request/response bodies, query strings, raw paths, and
 presigned URLs. Provider response bodies are intentionally not printed. Existing
 reverse-proxy/platform logging is configured separately.
+
+
+### Client-to-server correlation
+
+The iOS client sends `XCorrelationId` (a lowercase hyphenated UUID) for each API
+operation, retaining it through token refresh and automatic retries. Every HTTP
+attempt still receives a distinct server-generated `X-Request-ID`. Existing error
+references remain unchanged. All structured request/service logs include
+`correlation_id` and `request_id`; events outside a request have null IDs.
+
+The API accepts a single canonical UUID header, case-insensitively, and normalizes
+uppercase UUIDs. Missing, invalid, oversized, or duplicate headers are replaced
+with a new UUID; their raw values are never logged. Every handled response echoes
+`XCorrelationId`, and JSON errors add `detail.correlation_id` alongside the existing
+`detail.request_id`. Correlation IDs are diagnostics, never authorization or
+idempotency keys. iOS diagnostics are available in both Debug and Release.
+
+For voice downloads, filter Railway logs by the client `correlation_id`. Expect:
+`request.started`, `voice_download.entitlement_checked`, then either
+`request.rejected` (`premium_required`) or `voice_download.pack_available` and
+`voice_download.storage_authorization`, followed by `request.completed`.
+Unavailable definitions/locales/packs emit `voice_download.pack_unavailable`.
+Storage authorization records only `authorized` or `failed`, never the signed URL.
+Use `request_id` to distinguish multiple attempts within the operation.
+
+Deploy the backend before the iOS update. No migration or configuration change is
+needed. Old clients receive a generated correlation ID, and new clients still
+handle old servers that omit the response header. After deployment, send a known
+UUID to `/health/live`, verify the echoed header, and search Railway logs for it.
+Then verify signed-in denied and allowed downloads plus an expired-token refresh
+using a Sandbox test account. Do not paste credentials or signed URLs into logs.
+Headers on direct object-storage or third-party requests are unchanged.

@@ -130,3 +130,90 @@ async def test_parallel_requests_have_separate_contexts(caplog):
     for identifier in identifiers:
         request_events = [e['event'] for e in events(caplog) if e['request_id'] == identifier]
         assert request_events == ['request.started', 'parallel.before', 'parallel.after', 'request.completed']
+
+@pytest.mark.parametrize('headers', [[], [('XCorrelationId', '')], [('XCorrelationId', 'secret-injected')],
+    [('XCorrelationId', 'x' * 5000)], [('XCorrelationId', 'bad\nsecret')],
+    [('XCorrelationId', 'a' * 32)],
+    [('XCorrelationId', 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA'), ('xcorrelationid', 'BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB')]])
+async def test_invalid_correlation_is_replaced_without_logging(headers, caplog):
+    import uuid
+    app = FastAPI()
+    install_diagnostics(app)
+    @app.get('/ok')
+    async def ok():
+        return {}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+        response = await client.get('/ok', headers=headers)
+    identifier = response.headers['xcorrelationid']
+    assert str(uuid.UUID(identifier)) == identifier
+    assert response.status_code == 200
+    assert all(e['correlation_id'] == identifier for e in events(caplog))
+    for _, value in headers:
+        if value:
+            assert value not in json.dumps(events(caplog))
+
+
+@pytest.mark.parametrize('status', [200, 401, 403, 404, 422, 500])
+async def test_correlation_echo_and_error_contract(status, caplog):
+    from app.errors import api_error
+    from app.observability import correlation_id, request_id
+    identifier = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    app = FastAPI()
+    install_diagnostics(app)
+    @app.get('/check')
+    async def check(value: int = 1):
+        if status == 500:
+            raise RuntimeError('private-token')
+        if status not in (200, 422):
+            raise api_error(status, 'test_error', 'Test error')
+        return {}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+        response = await client.get('/check', params={'value': 'bad' if status == 422 else '1'},
+                                    headers={'xCoRrElAtIoNiD': identifier.upper()})
+    assert response.status_code == status
+    assert response.headers['xcorrelationid'] == identifier
+    assert len(response.headers['x-request-id']) == 32
+    if status != 200:
+        assert response.json()['detail']['correlation_id'] == identifier
+        assert response.json()['detail']['request_id'] == response.headers['x-request-id']
+    assert all(e['correlation_id'] == identifier for e in events(caplog))
+    assert correlation_id.get() is None
+    assert request_id.get() is None
+    assert 'private-token' not in json.dumps(events(caplog))
+
+
+async def test_concurrent_shared_correlations_keep_distinct_request_ids(caplog):
+    import asyncio
+    from app.observability import emit, correlation_id
+    ids = ['aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', '11111111-2222-3333-4444-555555555555']
+    app = FastAPI()
+    install_diagnostics(app)
+    @app.get('/parallel')
+    async def parallel():
+        emit('work.before')
+        await asyncio.sleep(0)
+        emit('work.after')
+        return {}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://testserver') as client:
+        responses = await asyncio.gather(*(client.get('/parallel', headers={'XCorrelationId': value}) for value in ids * 3))
+    assert len({r.headers['x-request-id'] for r in responses}) == 6
+    for response in responses:
+        logs = [e for e in events(caplog) if e['request_id'] == response.headers['x-request-id']]
+        assert [e['event'] for e in logs] == ['request.started', 'work.before', 'work.after', 'request.completed']
+        assert all(e['correlation_id'] == response.headers['xcorrelationid'] for e in logs)
+    assert correlation_id.get() is None
+
+
+async def test_voice_denial_has_correlated_decision(api_client, caplog):
+    from conftest import sign_in
+    client, _, email, _, _ = api_client
+    tokens = await sign_in(client, email)
+    identifier = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+    response = await client.post('/v1/voice-packs/voice_harbor/download', json={'locale': 'en-US'},
+        headers={'Authorization': f"Bearer {tokens['access_token']}", 'XCorrelationId': identifier})
+    assert response.status_code == 403
+    logs = [e for e in events(caplog) if e['correlation_id'] == identifier]
+    assert [e['event'] for e in logs] == ['request.started', 'voice_download.entitlement_checked', 'request.rejected', 'request.completed']
+    assert logs[1]['allowed'] is False
+    assert logs[2]['code'] == 'premium_required'
+    assert logs[3]['route'] == '/v1/voice-packs/{voice_id}/download'

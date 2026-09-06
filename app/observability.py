@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
+correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 logger = logging.getLogger("stayzy.api")
 logger.setLevel(logging.INFO)
@@ -23,7 +24,7 @@ if not logger.handlers:
 
 
 def emit(event: str, *, level: int = logging.INFO, **fields: object) -> None:
-    logger.log(level, json.dumps({"event": event, "request_id": request_id.get(), **fields}))
+    logger.log(level, json.dumps({**fields, "event": event, "request_id": request_id.get(), "correlation_id": correlation_id.get()}))
 
 
 def failure_fields(error: Exception) -> dict[str, object]:
@@ -42,6 +43,19 @@ def failure_fields(error: Exception) -> dict[str, object]:
     ]}
 
 
+def resolve_correlation_id(headers: list[tuple[bytes, bytes]]) -> str:
+    values = [value for key, value in headers if key.lower() == b"xcorrelationid"]
+    if len(values) == 1 and len(values[0]) == 36:
+        try:
+            value = values[0].decode("ascii")
+            identifier = str(uuid.UUID(value))
+            if identifier == value.lower():
+                return identifier
+        except (ValueError, UnicodeDecodeError):
+            pass
+    return str(uuid.uuid4())
+
+
 class RequestDiagnostics:
     def __init__(self, app):
         self.app = app
@@ -50,8 +64,11 @@ class RequestDiagnostics:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         identifier = uuid.uuid4().hex
+        correlation = resolve_correlation_id(scope.get("headers", []))
+        correlation_token = correlation_id.set(correlation)
         token = request_id.set(identifier)
         scope.setdefault("state", {})["request_id"] = identifier
+        scope["state"]["correlation_id"] = correlation
         start = time.monotonic()
         status = 500
         started = False
@@ -65,8 +82,8 @@ class RequestDiagnostics:
                 started = True
                 status = message["status"]
                 message = {**message, "headers": [
-                    (k, v) for k, v in message.get("headers", []) if k.lower() != b"x-request-id"
-                ] + [(b"x-request-id", identifier.encode())]}
+                    (k, v) for k, v in message.get("headers", []) if k.lower() not in {b"x-request-id", b"xcorrelationid"}
+                ] + [(b"x-request-id", identifier.encode()), (b"xcorrelationid", correlation.encode())]}
             await send(message)
 
         try:
@@ -81,6 +98,7 @@ class RequestDiagnostics:
                     "code": "internal_error",
                     "message": "Stayzy encountered a server error. Please try again later.",
                     "request_id": identifier,
+                    "correlation_id": correlation,
                 }})(scope, receive, tracked_send)
         finally:
             route = getattr(scope.get("route"), "path", "unmatched")
@@ -88,6 +106,7 @@ class RequestDiagnostics:
                  method=method, route=route, status=status,
                  duration_ms=round((time.monotonic() - start) * 1000, 1))
             request_id.reset(token)
+            correlation_id.reset(correlation_token)
 
 
 def install_diagnostics(app: FastAPI) -> None:
@@ -100,7 +119,7 @@ def install_diagnostics(app: FastAPI) -> None:
             detail = {"code": "http_error", "message": "Stayzy could not complete the request."}
         emit("request.rejected", status=error.status_code, code=detail["code"])
         return JSONResponse(status_code=error.status_code, headers=error.headers,
-                            content={"detail": {**detail, "request_id": request_id.get()}})
+                            content={"detail": {**detail, "request_id": request_id.get(), "correlation_id": correlation_id.get()}})
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):
@@ -108,5 +127,5 @@ def install_diagnostics(app: FastAPI) -> None:
         emit("request.validation_failed", status=422, issue_count=len(error.errors()))
         return JSONResponse(status_code=422, content={"detail": {
             "code": "invalid_request", "message": "Please check the submitted information and try again.",
-            "request_id": request_id.get(),
+            "request_id": request_id.get(), "correlation_id": correlation_id.get(),
         }})
