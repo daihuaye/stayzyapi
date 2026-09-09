@@ -17,6 +17,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    experiment_admin_token: str | None = None
+
     environment: Literal["development", "test", "staging", "production"] = "development"
     database_url: str = "sqlite+aiosqlite:///./stayzy-dev.db"
     public_app_url: str = "https://links.stayzy.app"

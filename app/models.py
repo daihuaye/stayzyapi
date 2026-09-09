@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, JSON, BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -156,3 +156,17 @@ class WebhookReceipt(Base):
     id: Mapped[str] = mapped_column(String(255), primary_key=True)
     provider: Mapped[str] = mapped_column(String(32), index=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ExperimentRule(Base):
+    __tablename__ = "experiment_rules"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    rollout_percentage: Mapped[int] = mapped_column(Integer, nullable=False)
+    allocation_salt: Mapped[str] = mapped_column(String(80), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("rollout_percentage >= 0 AND rollout_percentage <= 100", name="experiment_percentage_range"),
+    )

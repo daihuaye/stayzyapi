@@ -106,6 +106,8 @@ async def api_client(
     app = FastAPI()
     from app.observability import install_diagnostics
     install_diagnostics(app)
+    from app.routers import experiments
+    app.include_router(experiments.router)
     app.include_router(health.router)
     app.include_router(links.router)
     app.include_router(auth.router)

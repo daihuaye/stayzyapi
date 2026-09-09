@@ -122,7 +122,7 @@ async def build(
     print(f"Pack metadata destination: {target.drivername}; host={target.host or 'local'}; database={target.database}", flush=True)
     if target.get_backend_name() == "sqlite":
         print("Local SQLite: this job will NOT publish pack records to the hosted API. For Railway downloads, run against the API's PostgreSQL database.", flush=True)
-    if not settings.openai_api_key:
+    if not settings.openai_api_key and not preflight_only:
         raise VoicePackConfigurationError(
             "STAYZY_OPENAI_API_KEY is required for the pack-builder job"
         )
@@ -146,6 +146,11 @@ async def build(
             raise ValueError("Voice definition is unavailable")
         if locale not in voice.supported_locales:
             raise ValueError(f"Voice does not support {locale}")
+        print(
+            f"Resolved voice: {voice.id}; provider={voice.provider}; "
+            f"voice={voice.provider_voice_id}; model={voice.model}; "
+            f"delivery={voice.instruction_version}", flush=True,
+        )
         if not await storage.ready():
             raise VoicePackConfigurationError(
                 "Railway Bucket preflight failed. Check the bucket name, endpoint, region, "
@@ -164,8 +169,10 @@ async def build(
                 root = Path(directory)
                 files: dict[str, dict[str, object]] = {}
                 semaphore = asyncio.Semaphore(3)
+                completed = 0
 
                 async def create_one(phrase: dict[str, str]) -> None:
+                    nonlocal completed
                     async with semaphore:
                         content = await generate_audio(client, voice, phrase["text"])
                     validate_aac(content, phrase["id"])
@@ -176,6 +183,10 @@ async def build(
                         "sha256": hashlib.sha256(content).hexdigest(),
                         "bytes": len(content),
                     }
+
+                    completed += 1
+                    if completed % 25 == 0 or completed == len(phrases):
+                        print(f"Generated {voice.id}: {completed}/{len(phrases)} phrases", flush=True)
 
                 await asyncio.gather(*(create_one(phrase) for phrase in phrases))
                 preview = await generate_audio(client, voice, PREVIEW_TEXT)

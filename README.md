@@ -36,8 +36,11 @@ Run migrations and seed the provider-private catalog, then execute the builder
 as a Railway one-off job:
 
 ```bash
+python -m app.jobs.seed_catalog
 python -m app.jobs.build_voice_pack --voice-id voice_willow --locale en-US --preflight-only
-python -m app.jobs.build_voice_pack --voice-id voice_willow --locale en-US
+python -m app.jobs.build_voice_pack --voice-id voice_harbor --locale en-US --preflight-only
+python -m app.jobs.build_voice_pack --voice-id voice_willow --locale en-US --version <new-willow-version>
+python -m app.jobs.build_voice_pack --voice-id voice_harbor --locale en-US --version <new-harbor-version>
 ```
 
 Create a Railway Bucket first. For local development, copy these values from the
@@ -63,7 +66,22 @@ STAYZY_BUCKET_REGION=${{voice-packs.REGION}}
 ```
 
 Run `--preflight-only` first. It checks the phrase catalog, database voice,
-locale, and bucket access without calling OpenAI or generating audio.
+locale, and bucket access without calling OpenAI or generating audio. The output
+must show the resolved provider voice, model, and delivery version. Preflight
+does not require an OpenAI key; only audio generation does. Willow uses
+`cedar` / `warm-calm-v3-cedar`; Harbor uses `nova` / `grounded-v3-nova`.
+Both retain `gpt-4o-mini-tts-2025-12-15`, their speaking instructions, `en-US`,
+and their stable `voice_willow` / `voice_harbor` identifiers. Reseeding preserves
+each existing preview key until a successful publication replaces it.
+
+Always use a new pack version. Run against the existing prelaunch Railway API's
+PostgreSQL database to activate the hosted catalog; a local SQLite publication
+only uploads to the bucket and updates local metadata. Retired server records,
+archives, manifests, and previews remain available for rollback. Never delete
+bucket objects as part of an on-device upgrade.
+
+See [the Cedar/Nova release record](docs/VOICE_RELEASE_2026_09_09.md) for generated
+versions, checksums, validation, and the exact hosted activation commands.
 
 The deployed builder reads its bundled catalog from
 `app/assets/CompanionPhrases.json`, so it does not depend on the iOS repository
@@ -100,6 +118,10 @@ key for later versions. Add `--check-only` to verify files without writing recor
 Registration checks the archive format, phrase completeness, manifest identity,
 file lengths, and SHA-256 checksums, then activates the version transactionally.
 Repeated registration is safe; an existing version with different bytes is rejected.
+When publishing a replacement voice, pass `--preview-key` with its versioned
+preview key. Registration validates the preview before activating the pack and
+preview together in one transaction. Omit this option only when preserving the
+current preview is intentional (for example, recovering older metadata).
 Writes to SQLite are refused so a local run cannot appear to repair Railway.
 
 Verify `GET /v1/catalog/voices?locale=en-US` returns a non-null `pack_version` and

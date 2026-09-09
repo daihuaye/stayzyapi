@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 
-from sqlalchemy import select
-
 from app.db import SessionFactory
 from app.models import CompanionDefinition, VoiceDefinition
 
@@ -16,13 +14,13 @@ VOICE_SEEDS = [
         "tier": "premium",
         "supported_locales": ["en-US"],
         "provider": "openai",
-        "provider_voice_id": "coral",
+        "provider_voice_id": "cedar",
         "model": "gpt-4o-mini-tts-2025-12-15",
         "instructions": (
             "Speak warmly and calmly, with gentle confidence. Use a natural conversational "
             "pace, soft intonation, and short pauses. Avoid urgency or exaggerated enthusiasm."
         ),
-        "instruction_version": "warm-calm-v2-coral",
+        "instruction_version": "warm-calm-v3-cedar",
         "preview_object_key": "voice-previews/voice_willow/en-US/preview.aac",
         "status": "active",
         "sort_order": 10,
@@ -34,13 +32,13 @@ VOICE_SEEDS = [
         "tier": "premium",
         "supported_locales": ["en-US"],
         "provider": "openai",
-        "provider_voice_id": "echo",
+        "provider_voice_id": "nova",
         "model": "gpt-4o-mini-tts-2025-12-15",
         "instructions": (
             "Speak with a grounded, reassuring tone. Keep a relaxed conversational pace, "
             "gentle emphasis, and comfortable pauses. Never sound urgent or theatrical."
         ),
-        "instruction_version": "grounded-v2-echo",
+        "instruction_version": "grounded-v3-nova",
         "preview_object_key": "voice-previews/voice_harbor/en-US/preview.aac",
         "status": "active",
         "sort_order": 20,
@@ -62,7 +60,9 @@ async def seed() -> None:
                 db.add(VoiceDefinition(**values))
             else:
                 for key, value in values.items():
-                    setattr(item, key, value)
+                    # Published previews stay paired with their active pack until a rebuild.
+                    if key != "preview_object_key":
+                        setattr(item, key, value)
         for identifier, name, description, tier, order in COMPANION_SEEDS:
             item = await db.get(CompanionDefinition, identifier)
             if item is None:

@@ -14,7 +14,7 @@ from sqlalchemy.engine import make_url
 
 from app.config import get_settings
 from app.db import SessionFactory
-from app.jobs.build_voice_pack import DEFAULT_PHRASE_PATH, load_phrases
+from app.jobs.build_voice_pack import DEFAULT_PHRASE_PATH, load_phrases, validate_aac
 from app.models import VoiceDefinition, VoicePackVersion
 from app.services.storage import ObjectStorage
 
@@ -85,7 +85,7 @@ async def activate_pack(db, voice_id: str, locale: str, manifest_key: str, metad
     await db.flush()
 
 
-async def register(voice_id: str, locale: str, manifest_key: str, check_only: bool) -> None:
+async def register(voice_id: str, locale: str, manifest_key: str, check_only: bool, preview_key: str | None = None) -> None:
     settings = get_settings()
     url = make_url(settings.database_url)
     print(f'Target database: {url.drivername}; host={url.host or "local"}; database={url.database}')
@@ -100,6 +100,13 @@ async def register(voice_id: str, locale: str, manifest_key: str, check_only: bo
     expected_key = f"{prefix}{manifest.get('catalogVersion')}/{manifest.get('packVersion')}/manifest.json"
     if expected_key != manifest_key:
         raise ValueError('Object key and manifest version do not match')
+    if preview_key is not None:
+        expected_preview = f"voice-previews/{voice_id}/{locale}/{manifest['packVersion']}/preview.aac"
+        if preview_key != expected_preview:
+            raise ValueError('Preview key must match this voice, locale, and pack version')
+        response = await asyncio.to_thread(client.get_object, Bucket=settings.bucket, Key=preview_key)
+        preview = await asyncio.to_thread(response['Body'].read)
+        validate_aac(preview, 'preview')
     archive_key = manifest_key.removesuffix('manifest.json') + 'pack.zip'
     head = await asyncio.to_thread(client.head_object, Bucket=settings.bucket, Key=archive_key)
     if not 0 < head['ContentLength'] <= MAX_ARCHIVE_BYTES:
@@ -115,6 +122,9 @@ async def register(voice_id: str, locale: str, manifest_key: str, check_only: bo
     async with SessionFactory() as db:
         async with db.begin():
             await activate_pack(db, voice_id, locale, manifest_key, metadata)
+            if preview_key is not None:
+                voice = await db.get(VoiceDefinition, voice_id)
+                voice.preview_object_key = preview_key
     print(f"Published {voice_id} ({locale}): pack_version={metadata['version']}, download_bytes={metadata['size_bytes']}")
 
 
@@ -124,9 +134,10 @@ def main() -> None:
     parser.add_argument('--locale', default='en-US')
     parser.add_argument('--manifest-key', required=True)
     parser.add_argument('--check-only', action='store_true')
+    parser.add_argument('--preview-key', help='Validated versioned preview to activate with the pack')
     args = parser.parse_args()
     try:
-        asyncio.run(register(args.voice_id, args.locale, args.manifest_key, args.check_only))
+        asyncio.run(register(args.voice_id, args.locale, args.manifest_key, args.check_only, args.preview_key))
     except ValueError as error:
         parser.exit(1, f'Pack registration stopped: {error}\n')
 

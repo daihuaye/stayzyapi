@@ -61,3 +61,48 @@ async def test_registration_activates_catalog_idempotently(api_client, session_f
                 await activate_pack(db, 'voice_willow', 'en-US', key, {**metadata, 'sha256': 'b'*64})
     response = await client.get('/v1/catalog/voices?locale=en-US')
     assert response.json()['voices'][0]['pack_version'] == 'recovered'
+
+
+@pytest.mark.parametrize('valid_preview', [True, False])
+async def test_registration_pairs_validated_preview_with_pack(api_client, session_factory, tmp_path, monkeypatch, valid_preview):
+    import io
+    import shutil
+    from types import SimpleNamespace
+    from app.jobs import register_voice_pack as job
+    from app.models import VoiceDefinition
+    await seed_catalog(session_factory)
+    async with session_factory() as db:
+        voice = await db.get(VoiceDefinition, 'voice_willow')
+        voice.preview_object_key = 'old-preview.aac'
+        await db.commit()
+    path, manifest = make_pack(tmp_path)
+    preview_key = 'voice-previews/voice_willow/en-US/recovered/preview.aac'
+    # Syntactically valid ADTS frames; actual release decoding is checked with ffmpeg.
+    preview = (bytes([0xFF, 0xF1, 0x50, 0x80, 16, 0x1F, 0xFC]) + bytes(121)) * 60
+    if not valid_preview:
+        preview = b'broken'
+    class Client:
+        def get_object(self, **kwargs):
+            assert kwargs['Key'] == preview_key
+            return {'Body': io.BytesIO(preview)}
+        def head_object(self, **kwargs):
+            return {'ContentLength': path.stat().st_size}
+        def download_file(self, bucket, key, destination):
+            shutil.copyfile(path, destination)
+    class Storage:
+        def _s3(self): return Client()
+        async def get_json(self, key): return manifest
+    monkeypatch.setattr(job, 'get_settings', lambda: SimpleNamespace(database_url='postgresql://test/railway', bucket='test'))
+    monkeypatch.setattr(job, 'ObjectStorage', lambda _: Storage())
+    monkeypatch.setattr(job, 'SessionFactory', session_factory)
+    key = 'voice-packs/voice_willow/en-US/catalog/recovered/manifest.json'
+    if valid_preview:
+        await job.register('voice_willow', 'en-US', key, False, preview_key)
+    else:
+        with pytest.raises(ValueError):
+            await job.register('voice_willow', 'en-US', key, False, preview_key)
+    async with session_factory() as db:
+        voice = await db.get(VoiceDefinition, 'voice_willow')
+        assert voice.preview_object_key == (preview_key if valid_preview else 'old-preview.aac')
+        active = await db.scalar(select(VoicePackVersion).where(VoicePackVersion.status == 'active'))
+        assert (active.version == 'recovered') == valid_preview
