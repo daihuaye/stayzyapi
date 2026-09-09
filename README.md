@@ -217,3 +217,9 @@ UUID to `/health/live`, verify the echoed header, and search Railway logs for it
 Then verify signed-in denied and allowed downloads plus an expired-token refresh
 using a Sandbox test account. Do not paste credentials or signed URLs into logs.
 Headers on direct object-storage or third-party requests are unchanged.
+
+## Administrator accounts
+
+The web control room uses separate administrator accounts with email/password login.
+See [administrator setup and deployment](docs/ADMINISTRATORS.md) for migrations,
+owner bootstrap/recovery, SendGrid configuration, and the token-login cutover.

@@ -4,13 +4,13 @@ import secrets
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Response
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings, get_settings
+from app.admin_security import AdminPrincipal, require_administrator
 from app.db import get_db
 from app.errors import api_error
 from app.models import ExperimentRule
@@ -45,18 +45,6 @@ class RuleCreated(RuleResponse):
     key: str
 
 
-def require_experiment_admin(
-    settings: Settings = Depends(get_settings),
-    authorization: str | None = Header(default=None),
-) -> None:
-    configured = settings.experiment_admin_token
-    scheme, _, token = (authorization or "").partition(" ")
-    if not configured or not configured.strip():
-        raise api_error(503, "experiment_admin_unconfigured", "Experiment administration is unavailable.")
-    if scheme.lower() != "bearer" or not secrets.compare_digest(token.encode(), configured.encode()):
-        raise api_error(401, "experiment_admin_unauthorized", "Administrator authentication required.")
-
-
 def serialize(rule: ExperimentRule) -> RuleResponse:
     return RuleResponse(enabled=rule.enabled, rolloutPercentage=rule.rollout_percentage,
                         allocationSalt=rule.allocation_salt)
@@ -70,14 +58,15 @@ async def experiments(response: Response, db: AsyncSession = Depends(get_db)) ->
 
 
 @router.get("/admin/experiments", response_model=ExperimentsResponse,
-            dependencies=[Depends(require_experiment_admin)])
+            dependencies=[Depends(require_administrator)])
 async def list_experiments(response: Response, db: AsyncSession = Depends(get_db)) -> ExperimentsResponse:
     return await experiments(response, db)
 
 
 @router.put("/admin/experiments/{key}", response_model=RuleResponse,
-            dependencies=[Depends(require_experiment_admin)])
+            dependencies=[Depends(require_administrator)])
 async def update_experiment(key: str, body: RuleUpdate, response: Response,
+                            principal: AdminPrincipal = Depends(require_administrator),
                             db: AsyncSession = Depends(get_db)) -> RuleResponse:
     response.headers["Cache-Control"] = "no-store"
     rule = await db.scalar(select(ExperimentRule).where(ExperimentRule.key == key).with_for_update())
@@ -88,15 +77,16 @@ async def update_experiment(key: str, body: RuleUpdate, response: Response,
     rule.rollout_percentage = body.rolloutPercentage
     rule.updated_at = datetime.now(UTC)
     await db.commit()
-    emit("experiment.updated", experiment_key=key, previous_enabled=previous_enabled,
+    emit("experiment.updated", administrator_id=principal.account.id, experiment_key=key, previous_enabled=previous_enabled,
          previous_percentage=previous_percentage, enabled=rule.enabled,
          rollout_percentage=rule.rollout_percentage)
     return serialize(rule)
 
 
 @router.post("/admin/experiments", response_model=RuleCreated, status_code=201,
-             dependencies=[Depends(require_experiment_admin)])
+             dependencies=[Depends(require_administrator)])
 async def create_experiment(body: RuleCreate, response: Response,
+                            principal: AdminPrincipal = Depends(require_administrator),
                             db: AsyncSession = Depends(get_db)) -> RuleCreated:
     rule = ExperimentRule(key=body.key, enabled=body.enabled,
                           rollout_percentage=body.rolloutPercentage,
@@ -110,6 +100,6 @@ async def create_experiment(body: RuleCreate, response: Response,
             raise api_error(409, "experiment_exists", "An experiment with this key already exists.")
         raise
     response.headers["Cache-Control"] = "no-store"
-    emit("experiment.created", experiment_key=rule.key, enabled=rule.enabled,
+    emit("experiment.created", administrator_id=principal.account.id, experiment_key=rule.key, enabled=rule.enabled,
          rollout_percentage=rule.rollout_percentage)
     return RuleCreated(key=rule.key, **serialize(rule).model_dump())

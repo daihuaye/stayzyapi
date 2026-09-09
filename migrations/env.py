@@ -1,4 +1,5 @@
 from __future__ import annotations
+import app.admin_models  # noqa: F401
 
 import asyncio
 from logging.config import fileConfig

@@ -13,7 +13,7 @@ async def seed(session_factory):
 
 
 @pytest.mark.asyncio
-async def test_public_and_live_admin_update(api_client, settings, session_factory, caplog):
+async def test_public_and_live_admin_update(api_client, settings, session_factory, caplog, admin_headers):
     client, *_ = api_client
     await seed(session_factory)
     public = await client.get("/v1/experiments")
@@ -21,8 +21,7 @@ async def test_public_and_live_admin_update(api_client, settings, session_factor
     assert public.headers["cache-control"] == "no-store"
     assert public.json() == {"schemaVersion": 1, "rules": {"companion": {
         "enabled": True, "rolloutPercentage": 100, "allocationSalt": "companion-v1"}}}
-    settings.experiment_admin_token = "operator-test-secret"
-    headers = {"Authorization": "Bearer operator-test-secret", "XCorrelationId": "ba3c1f1a-63cf-4f23-a40b-13fc2f8e2e83"}
+    headers = {**admin_headers, "XCorrelationId": "ba3c1f1a-63cf-4f23-a40b-13fc2f8e2e83"}
     with caplog.at_level("INFO"):
         changed = await client.put("/v1/admin/experiments/companion", headers=headers,
                                    json={"enabled": False, "rolloutPercentage": 25})
@@ -42,9 +41,7 @@ async def test_public_and_live_admin_update(api_client, settings, session_factor
 @pytest.mark.asyncio
 async def test_admin_fails_closed(api_client, settings):
     client, *_ = api_client
-    settings.experiment_admin_token = None
-    assert (await client.get("/v1/admin/experiments")).status_code == 503
-    settings.experiment_admin_token = "secret"
+    assert (await client.get("/v1/admin/experiments")).status_code == 401
     for authorization in [None, "Bearer wrong", "Basic secret", "Bearer sécret"]:
         headers = {"Authorization": authorization} if authorization and authorization.isascii() else {}
         assert (await client.get("/v1/admin/experiments", headers=headers)).status_code == 401
@@ -53,11 +50,10 @@ async def test_admin_fails_closed(api_client, settings):
 
 
 @pytest.mark.asyncio
-async def test_validation_unknown_keys_and_boundaries(api_client, settings, session_factory):
+async def test_validation_unknown_keys_and_boundaries(api_client, settings, session_factory, admin_headers):
     client, *_ = api_client
     await seed(session_factory)
-    settings.experiment_admin_token = "secret"
-    headers = {"Authorization": "Bearer secret"}
+    headers = admin_headers
     for percentage in [-1, 101, 0.5, "50", True]:
         response = await client.put("/v1/admin/experiments/companion", headers=headers,
                                     json={"enabled": True, "rolloutPercentage": percentage})
@@ -90,9 +86,29 @@ def test_migration_seeds_and_downgrades(tmp_path):
                        cwd=root, env=environment, check=True, capture_output=True)
     migrate("head")
     with sqlite3.connect(database) as db:
-        assert db.execute("SELECT key, enabled, rollout_percentage, allocation_salt FROM experiment_rules").fetchall() == [
-            ("companion", 1, 100, "companion-v1")]
+        assert db.execute("SELECT key, enabled, rollout_percentage, allocation_salt FROM experiment_rules ORDER BY key").fetchall() == [
+            ("companion", 1, 100, "companion-v1"),
+            ("rive_character", 0, 0, "rive-character-v1")]
     migrate("0002_billing_freshness", "downgrade")
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT name FROM sqlite_master WHERE name='experiment_rules'").fetchall() == []
     migrate("head")
+
+
+@pytest.mark.asyncio
+async def test_rive_rollout_is_independent_of_companion(api_client, settings, session_factory, admin_headers):
+    client, *_ = api_client
+    await seed(session_factory)
+    async with session_factory() as db:
+        db.add(ExperimentRule(key="rive_character", enabled=False, rollout_percentage=0,
+                              allocation_salt="rive-character-v1"))
+        await db.commit()
+    response = await client.put("/v1/admin/experiments/rive_character",
+                                headers=admin_headers,
+                                json={"enabled": True, "rolloutPercentage": 25})
+    assert response.status_code == 200
+    rules = (await client.get("/v1/experiments")).json()["rules"]
+    assert rules["companion"]["enabled"] is True
+    assert rules["companion"]["rolloutPercentage"] == 100
+    assert rules["rive_character"] == {"enabled": True, "rolloutPercentage": 25,
+                                       "allocationSalt": "rive-character-v1"}

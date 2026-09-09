@@ -17,7 +17,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    experiment_admin_token: str | None = None
+    admin_web_url: str | None = None
+    sendgrid_admin_reset_template_id: str | None = None
+    admin_login_budget: int = Field(default=100, ge=1)
+    admin_reset_budget: int = Field(default=30, ge=1)
 
     environment: Literal["development", "test", "staging", "production"] = "development"
     database_url: str = "sqlite+aiosqlite:///./stayzy-dev.db"

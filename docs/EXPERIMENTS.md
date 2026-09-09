@@ -66,15 +66,14 @@ fixtures use a fixed experiment provider and support the same Debug overrides.
 
 1. Deploy the backend with migration `0003_experiment_rules` before shipping iOS.
    Run `alembic upgrade head` through the backend's normal deployment workflow.
-2. Set the backend-only `STAYZY_EXPERIMENT_ADMIN_TOKEN` secret. Keep it out of
-   app builds. Missing/blank configuration returns 503 for admin requests;
-   missing/incorrect bearer authentication returns 401.
+2. Configure administrator accounts using [ADMINISTRATORS.md](ADMINISTRATORS.md).
+   Bootstrap the first owner, change the temporary password, and sign in through
+   the web admin. Shared operator-token authentication has been removed.
 3. Use `GET /v1/admin/experiments` to inspect rules and
-   `PUT /v1/admin/experiments/companion` to update the existing row. Supply the
-   operator token as the Authorization Bearer header through a trusted API client.
+   `PUT /v1/admin/experiments/companion` to update the existing row. Requests use
+   the opaque administrator session as the Authorization Bearer header.
    The JSON body is `{"enabled":true,"rolloutPercentage":50}`. Unknown keys return
-   404; invalid percentages, types, or extra fields return 422. Salts cannot be
-   changed through this API.
+   404; invalid percentages, types, or extra fields return 422. Salts cannot change.
 4. Verify public GET reflects the update immediately. Both GET endpoints read the
    database on every request and return `Cache-Control: no-store`.
 5. Verify 0%, an intermediate percentage, and 100% in staging. New sessions should
@@ -87,3 +86,28 @@ an eligible successful client refresh and at a new session boundary. It is not a
 immediate emergency shutdown; offline cache expiry returns to bundled defaults.
 No deployment, production rule update, or secret provisioning is performed by the
 implementation itself.
+
+## Rive character flight
+
+`rive_character` independently gates Rive artwork, animated character choices in
+the Focus form, and the Avatar Credits entry in Settings. Its bundled default is
+off. Migration `0004_rive_character` seeds it disabled at 0%; `companion` remains
+on at 100% so static characters remain available.
+
+To roll out to 25% of installations, send an authenticated admin request:
+
+```http
+PUT /v1/admin/experiments/rive_character
+Content-Type: application/json
+Authorization: Bearer <administrator-session>
+
+{"enabled":true,"rolloutPercentage":25}
+```
+
+A stored Rive appearance falls back to the standard static character while this
+gate is off, without rewriting its saved ID. That same static fallback is marked
+selected in the Focus form. The Rive decision uses the existing frozen session
+snapshot, 10-minute refresh throttle, and 24-hour cache expiry. Snapshot metadata
+from older clients missing this key defaults it off. `companion=false` still hides
+all companion artwork. Debug testing can use `STAYZY_RIVE_CHARACTER_ENABLED=0|1`;
+Release builds ignore this override.

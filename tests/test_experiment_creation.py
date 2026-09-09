@@ -5,10 +5,9 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_create_deliver_update_and_duplicate(api_client, settings, caplog):
+async def test_create_deliver_update_and_duplicate(api_client, settings, caplog, admin_headers):
     client, *_ = api_client
-    settings.experiment_admin_token = "creation-test-secret"
-    headers = {"Authorization": "Bearer creation-test-secret"}
+    headers = admin_headers
     body = {"key": "focus_coach", "enabled": False, "rolloutPercentage": 0}
     with caplog.at_level("INFO"):
         created = await client.post("/v1/admin/experiments", headers=headers, json=body)
@@ -35,10 +34,9 @@ async def test_create_deliver_update_and_duplicate(api_client, settings, caplog)
 
 
 @pytest.mark.asyncio
-async def test_creation_validation_and_auth(api_client, settings):
+async def test_creation_validation_and_auth(api_client, settings, admin_headers):
     client, *_ = api_client
-    settings.experiment_admin_token = "secret"
-    headers = {"Authorization": "Bearer secret"}
+    headers = admin_headers
     body = {"key": "valid", "enabled": False, "rolloutPercentage": 0}
     assert (await client.post("/v1/admin/experiments", json=body)).status_code == 401
     for field, values in {
@@ -56,11 +54,10 @@ async def test_creation_validation_and_auth(api_client, settings):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_duplicate_creation(api_client, settings):
+async def test_concurrent_duplicate_creation(api_client, settings, admin_headers):
     client, *_ = api_client
-    settings.experiment_admin_token = "secret"
     responses = await asyncio.gather(*[
-        client.post("/v1/admin/experiments", headers={"Authorization": "Bearer secret"},
+        client.post("/v1/admin/experiments", headers=admin_headers,
                     json={"key": "concurrent", "enabled": False, "rolloutPercentage": 0})
         for _ in range(2)
     ])
