@@ -196,7 +196,7 @@ async def test_reset_rate_limits_and_global_budget(api_client,session_factory,se
     assert len(sender.admin_deliveries)==3
 
 @pytest.mark.asyncio
-async def test_sendgrid_admin_payload_disables_tracking(settings):
+async def test_sendgrid_admin_plain_text_payload_disables_tracking(settings):
     import httpx
     import json
     from app.services.email import SendGridEmailSender
@@ -205,10 +205,20 @@ async def test_sendgrid_admin_payload_disables_tracking(settings):
         captured.append(json.loads(request.content))
         return httpx.Response(202,headers={'x-message-id':'test-message'})
     settings.sendgrid_api_key='not-a-real-key'
-    settings.sendgrid_admin_reset_template_id='test-admin-template'
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
         sender=SendGridEmailSender(settings,client=client)
         result=await sender.send_admin_reset('owner@example.com','https://web.example/admin/reset-password#token=synthetic','test')
     assert result.accepted
-    assert captured[0]['template_id']=='test-admin-template'
+    assert result.message_id == 'test-message'
+    payload = captured[0]
+    assert 'template_id' not in payload
+    assert payload['personalizations'] == [{'to': [{'email': 'owner@example.com'}]}]
+    assert payload['subject'] == 'Reset your Stayzy administrator password'
+    assert len(payload['content']) == 1
+    assert payload['content'][0]['type'] == 'text/plain'
+    body = payload['content'][0]['value']
+    assert 'https://web.example/admin/reset-password#token=synthetic' in body
+    assert '30 minutes' in body
+    assert 'only be used once' in body
+    assert 'ignore this email' in body
     assert captured[0]['tracking_settings']=={'click_tracking':{'enable':False,'enable_text':False},'open_tracking':{'enable':False}}

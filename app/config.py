@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     )
 
     admin_web_url: str | None = None
-    sendgrid_admin_reset_template_id: str | None = None
     admin_login_budget: int = Field(default=100, ge=1)
     admin_reset_budget: int = Field(default=30, ge=1)
 
@@ -97,7 +96,6 @@ class Settings(BaseSettings):
                 "jwt_private_key": self.jwt_private_key,
                 "jwt_public_key": self.jwt_public_key,
                 "sendgrid_api_key": self.sendgrid_api_key,
-                "sendgrid_admin_reset_template_id": self.sendgrid_admin_reset_template_id,
                 "bucket": self.bucket,
                 "bucket_access_key_id": self.bucket_access_key_id,
                 "bucket_secret_access_key": self.bucket_secret_access_key,

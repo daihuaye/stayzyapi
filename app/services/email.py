@@ -22,7 +22,7 @@ class SendGridEmailSender:
         self.client = client or httpx.AsyncClient(timeout=8)
 
     async def send_admin_reset(self, email: str, reset_link: str, challenge_id: str) -> EmailSendResult:
-        if not self.settings.sendgrid_api_key or not self.settings.sendgrid_admin_reset_template_id:
+        if not self.settings.sendgrid_api_key:
             emit("admin.email_skipped", reason="missing_configuration")
             return EmailSendResult(accepted=False)
         response = await self.client.post(
@@ -30,9 +30,17 @@ class SendGridEmailSender:
             headers={"Authorization": f"Bearer {self.settings.sendgrid_api_key}", "Content-Type": "application/json"},
             json={
                 "from": {"email": self._from_address(), "name": "Stayzy"},
-                "personalizations": [{"to": [{"email": email}], "dynamic_template_data": {
-                    "subject": "Reset your Stayzy administrator password", "reset_link": reset_link, "expires_minutes": 30}}],
-                "template_id": self.settings.sendgrid_admin_reset_template_id,
+                "personalizations": [{"to": [{"email": email}]}],
+                "subject": "Reset your Stayzy administrator password",
+                "content": [{
+                    "type": "text/plain",
+                    "value": (
+                        "Use the following link to reset your Stayzy administrator password:\n\n"
+                        f"{reset_link}\n\n"
+                        "This link expires in 30 minutes and can only be used once.\n\n"
+                        "If you did not request a password reset, you can ignore this email.\n"
+                    ),
+                }],
                 "tracking_settings": {"click_tracking": {"enable": False, "enable_text": False}, "open_tracking": {"enable": False}},
             },
         )

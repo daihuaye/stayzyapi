@@ -38,7 +38,6 @@ owner in Railway. Never apply these steps to production as part of automated tes
 | Service | Variable | Purpose |
 | --- | --- | --- |
 | Railway backend | `STAYZY_ADMIN_WEB_URL` | Fixed web origin for password recovery, e.g. `https://stayzyweb.vercel.app`. HTTPS required in production; no path, query, credentials, or fragment. |
-| Railway backend | `STAYZY_SENDGRID_ADMIN_RESET_TEMPLATE_ID` | Dedicated administrator recovery template. |
 | Railway backend | Existing SendGrid API key and sender | Reuse the configured mail service. |
 | Railway backend | `STAYZY_ADMIN_LOGIN_BUDGET` | Global login/change-password attempts per minute; default 100. |
 | Railway backend | `STAYZY_ADMIN_RESET_BUDGET` | Global reset requests per minute; default 30. |
@@ -51,10 +50,10 @@ Use a separate database and secrets for local/staging verification.
 
 ## Recovery mail
 
-The SendGrid dynamic template receives `subject`, `reset_link`, and
-`expires_minutes` (30). Use `{{reset_link}}` for the reset button and explain
-that the request can be ignored when unsolicited. Click and open tracking are
-disabled. Do not add third-party tracking to recovery pages.
+The backend sends a plain-text email through SendGrid containing the reset link,
+its 30-minute lifetime, and a notice to ignore unsolicited requests. No SendGrid
+template or template ID is required. Click and open tracking are disabled. Do not
+add third-party tracking to recovery pages.
 
 Reset URLs carry the token in the fragment. The web form copies it into transient
 memory and immediately removes the fragment, so a refresh requires reopening the
