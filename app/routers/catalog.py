@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.dependencies import no_store
 
 from datetime import UTC, datetime
 
@@ -8,10 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.dependencies import optional_claims, require_user
+from app.dependencies import optional_grant, require_grant
 from app.errors import api_error
 from app.observability import emit
-from app.models import AuthSession, CompanionDefinition, User, VoiceDefinition, VoicePackVersion
+from app.models import StoreTransaction, CompanionDefinition, VoiceDefinition, VoicePackVersion
 from app.schemas import (
     CompanionCatalogItem,
     CompanionCatalogResponse,
@@ -20,43 +21,22 @@ from app.schemas import (
     VoicePackDownloadRequest,
     VoicePackDownloadResponse,
 )
-from app.security import AccessClaims
 from app.services.entitlements import entitlement_state
 from app.services.storage import ObjectStorage, StorageUnavailable
 
 
-router = APIRouter(prefix="/v1", tags=["catalog"])
-
-
-async def _premium_for_optional_user(
-    db: AsyncSession,
-    claims: AccessClaims | None,
-    settings: Settings,
-) -> bool:
-    if claims is None:
-        return False
-    active_session = await db.scalar(
-        select(AuthSession.id).where(
-            AuthSession.id == claims.session_id,
-            AuthSession.user_id == claims.user_id,
-            AuthSession.revoked_at.is_(None),
-            AuthSession.expires_at > datetime.now(UTC),
-        )
-    )
-    if active_session is None:
-        return False
-    return (await entitlement_state(db, claims.user_id, settings)).permits_download
+router = APIRouter(prefix="/v1", tags=["catalog"], dependencies=[Depends(no_store)])
 
 
 @router.get("/catalog/voices", response_model=VoiceCatalogResponse)
 async def voices(
     request: Request,
     locale: str = "en-US",
-    claims: AccessClaims | None = Depends(optional_claims),
+    grant: StoreTransaction | None = Depends(optional_grant),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> VoiceCatalogResponse:
-    premium = await _premium_for_optional_user(db, claims, settings)
+    premium = grant is not None and entitlement_state(grant, settings).permits_download
     definitions = list(
         await db.scalars(
             select(VoiceDefinition)
@@ -102,11 +82,11 @@ async def voices(
 
 @router.get("/catalog/companions", response_model=CompanionCatalogResponse)
 async def companions(
-    claims: AccessClaims | None = Depends(optional_claims),
+    grant: StoreTransaction | None = Depends(optional_grant),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> CompanionCatalogResponse:
-    premium = await _premium_for_optional_user(db, claims, settings)
+    premium = grant is not None and entitlement_state(grant, settings).permits_download
     definitions = list(
         await db.scalars(
             select(CompanionDefinition)
@@ -133,11 +113,11 @@ async def authorize_voice_pack_download(
     voice_id: str,
     body: VoicePackDownloadRequest,
     request: Request,
-    user: User = Depends(require_user),
+    grant: StoreTransaction = Depends(require_grant),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> VoicePackDownloadResponse:
-    state = await entitlement_state(db, user.id, settings)
+    state = entitlement_state(grant, settings)
     emit("voice_download.entitlement_checked", allowed=state.permits_download,
          status=state.status, plan=state.plan)
     if not state.permits_download:

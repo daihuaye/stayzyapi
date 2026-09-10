@@ -15,7 +15,7 @@ from app.config import Settings, get_settings
 from app.admin_models import Administrator, AdministratorLock
 from app.admin_security import hash_password
 from app.db import Base, get_db
-from app.routers import auth, catalog, entitlements, health, iap, links, webhooks
+from app.routers import catalog, entitlements, health, iap
 from app.services.apple_store import VerifiedNotification, VerifiedStoreTransaction
 from app.services.email import EmailSendResult
 
@@ -89,7 +89,6 @@ def settings(tmp_path) -> Settings:
         development_jwt_secret="test-secret-that-is-at-least-32-bytes",
         rate_limit_salt="test-rate-limit-salt",
         allowed_hosts=["testserver", "localhost"],
-        sendgrid_webhook_public_key=None,
     )
 
 
@@ -120,13 +119,9 @@ async def api_client(
     app.include_router(admin.router)
     app.include_router(experiments.router)
     app.include_router(health.router)
-    app.include_router(links.router)
-    app.include_router(auth.router)
-    app.include_router(auth.account_router)
     app.include_router(catalog.router)
     app.include_router(entitlements.router)
     app.include_router(iap.router)
-    app.include_router(webhooks.router)
 
     async def override_db() -> AsyncIterator[AsyncSession]:
         async with session_factory() as session:
@@ -144,21 +139,6 @@ async def api_client(
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client, app, email, storage, apple
-
-
-async def sign_in(
-    client: httpx.AsyncClient,
-    email: FakeEmailSender,
-    address: str = "person@example.com",
-) -> dict[str, str | int]:
-    response = await client.post("/v1/auth/magic-links", json={"email": address})
-    assert response.status_code == 202
-    verified = await client.post(
-        "/v1/auth/magic-links/verify",
-        json={"token": email.latest_token},
-    )
-    assert verified.status_code == 200
-    return verified.json()
 
 
 @pytest_asyncio.fixture

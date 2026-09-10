@@ -32,15 +32,10 @@ class Settings(BaseSettings):
     jwt_private_key: str | None = None
     jwt_public_key: str | None = None
     development_jwt_secret: str = "development-only-change-me"
-    access_token_minutes: int = 15
-    refresh_token_days: int = 30
-    recent_authentication_minutes: int = 10
     rate_limit_salt: str = "development-rate-limit-salt"
 
     sendgrid_api_key: str | None = None
     sendgrid_from_email: str = "Stayzy <signin@mail.stayzy.app>"
-    sendgrid_magic_link_template_id: str | None = None
-    sendgrid_webhook_public_key: str | None = None
 
     bucket: str | None = None
     bucket_endpoint: str = "https://storage.railway.app"
@@ -102,8 +97,7 @@ class Settings(BaseSettings):
                 "jwt_private_key": self.jwt_private_key,
                 "jwt_public_key": self.jwt_public_key,
                 "sendgrid_api_key": self.sendgrid_api_key,
-                "sendgrid_magic_link_template_id": self.sendgrid_magic_link_template_id,
-                "sendgrid_webhook_public_key": self.sendgrid_webhook_public_key,
+                "sendgrid_admin_reset_template_id": self.sendgrid_admin_reset_template_id,
                 "bucket": self.bucket,
                 "bucket_access_key_id": self.bucket_access_key_id,
                 "bucket_secret_access_key": self.bucket_secret_access_key,

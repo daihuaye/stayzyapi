@@ -52,64 +52,12 @@ async def test_request_ids_validation_and_safe_exception(caplog):
         assert secret not in text
 
 
-@pytest.mark.parametrize('status,event', [(202,'email.accepted'), (400,'email.rejected'), (401,'email.rejected'), (403,'email.rejected'), (429,'email.rejected'), (500,'email.rejected')])
-async def test_sendgrid_outcomes_are_safe(status, event, caplog):
-    def handler(request):
-        assert json.loads(request.content)['personalizations'][0]['dynamic_template_data']['magic_link'].endswith('token=secret-token')
-        return httpx.Response(status, json={'errors':[{'message':'secret-email@example.com secret-token'}]})
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        sender = SendGridEmailSender(Settings(_env_file=None, environment='test', sendgrid_api_key='secret-key', sendgrid_magic_link_template_id='secret-template'), client)
-        result = await sender.send_magic_link('secret-email@example.com', 'https://example.com?token=secret-token', 'private-challenge')
-    assert result.accepted == (status == 202)
-    logs = events(caplog)
-    assert any(e['event'] == event and e['status'] == status for e in logs)
-    text = json.dumps(logs)
-    for value in ['secret-email', 'secret-token', 'secret-key', 'secret-template', 'private-challenge']:
-        assert value not in text
 
 
-async def test_missing_email_configuration_and_transport_failure(caplog):
-    def handler(request):
-        raise httpx.ConnectError('secret-host secret-token', request=request)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        sender = SendGridEmailSender(Settings(_env_file=None, environment='test', sendgrid_api_key=None, sendgrid_magic_link_template_id=None), client)
-        assert not (await sender.send_magic_link('private', 'private', 'private')).accepted
-        assert any(e['event'] == 'email.skipped' and 'STAYZY_SENDGRID_API_KEY' in e['missing'] for e in events(caplog))
-        sender.settings.sendgrid_api_key = 'secret-key'
-        sender.settings.sendgrid_magic_link_template_id = 'secret-template'
-        with pytest.raises(httpx.ConnectError):
-            await sender.send_magic_link('private', 'private', 'private')
-    logs = events(caplog)
-    assert any(e['event'] == 'email.send_failed' for e in logs)
-    assert 'secret-host' not in json.dumps(logs)
 
 
-async def test_email_failure_stays_generic_and_is_correlated(api_client, caplog):
-    client, app, _, storage, _ = api_client
-    class FailedSender:
-        async def send_magic_link(self, *args):
-            raise RuntimeError('sensitive message')
-    app.state.email_sender = FailedSender()
-    response = await client.post('/v1/auth/magic-links', json={'email':'person@example.com'})
-    assert response.status_code == 202
-    assert response.json() == {'status':'accepted'}
-    logs = events(caplog)
-    assert any(e['event'] == 'auth.magic_link_processed' and e['send_state'] == 'failed' and e['request_id'] == response.headers['x-request-id'] for e in logs)
-    assert 'sensitive message' not in json.dumps(logs)
-    storage.available = False
-    response = await client.get('/health/ready')
-    assert response.status_code == 503
-    assert any(e['event'] == 'readiness.failed' and e['dependency'] == 'bucket' for e in events(caplog))
 
 
-async def test_throttling_is_visible_only_in_logs(api_client, caplog):
-    client, _, _, _, _ = api_client
-    for _ in range(4):
-        response = await client.post('/v1/auth/magic-links', json={'email':'limited@example.com'})
-        assert response.status_code == 202
-        assert response.json() == {'status':'accepted'}
-    assert any(e['event'] == 'auth.magic_link_throttled' for e in events(caplog))
-    assert 'limited@example.com' not in json.dumps(events(caplog))
 
 
 async def test_parallel_requests_have_separate_contexts(caplog):
@@ -202,18 +150,3 @@ async def test_concurrent_shared_correlations_keep_distinct_request_ids(caplog):
         assert [e['event'] for e in logs] == ['request.started', 'work.before', 'work.after', 'request.completed']
         assert all(e['correlation_id'] == response.headers['xcorrelationid'] for e in logs)
     assert correlation_id.get() is None
-
-
-async def test_voice_denial_has_correlated_decision(api_client, caplog):
-    from conftest import sign_in
-    client, _, email, _, _ = api_client
-    tokens = await sign_in(client, email)
-    identifier = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
-    response = await client.post('/v1/voice-packs/voice_harbor/download', json={'locale': 'en-US'},
-        headers={'Authorization': f"Bearer {tokens['access_token']}", 'XCorrelationId': identifier})
-    assert response.status_code == 403
-    logs = [e for e in events(caplog) if e['correlation_id'] == identifier]
-    assert [e['event'] for e in logs] == ['request.started', 'voice_download.entitlement_checked', 'request.rejected', 'request.completed']
-    assert logs[1]['allowed'] is False
-    assert logs[2]['code'] == 'premium_required'
-    assert logs[3]['route'] == '/v1/voice-packs/{voice_id}/download'

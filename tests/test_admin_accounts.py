@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.admin_models import Administrator, AdministratorReset, AdministratorSession
 from app.admin_security import hash_password, verify_password
 from app.security import sha256
-from conftest import sign_in
+from app.security import TokenSigner
 
 PASSWORD = 'temporary password 123'
 NEW_PASSWORD = 'my permanent password 456'
@@ -23,7 +23,7 @@ async def login(client,email='owner@example.com',password=PASSWORD):
     return {'Authorization':f"Bearer {response.json()['session_token']}"}
 
 @pytest.mark.asyncio
-async def test_first_login_password_change_and_customer_isolation(api_client,session_factory,caplog):
+async def test_first_login_password_change_and_customer_isolation(api_client,session_factory,caplog,settings):
     client,_,email,*_=api_client
     account_id=await add_account(session_factory,temporary=True)
     headers=await login(client)
@@ -41,7 +41,7 @@ async def test_first_login_password_change_and_customer_isolation(api_client,ses
         assert await verify_password(account.password_hash,NEW_PASSWORD)
         sessions=(await db.scalars(select(AdministratorSession))).all()
         assert all(s.token_hash != headers['Authorization'][7:] for s in sessions)
-    customer=await sign_in(client,email)
+    customer={"access_token": TokenSigner(settings).purchase_token("not-an-admin")}
     assert (await client.get('/v1/admin/experiments',headers={'Authorization':f"Bearer {customer['access_token']}"})).status_code==401
     assert (await client.get('/v1/admin/experiments',headers={'Authorization':'Bearer old-shared-admin-token'})).status_code==401
     assert PASSWORD not in caplog.text and NEW_PASSWORD not in caplog.text

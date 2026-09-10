@@ -11,41 +11,14 @@ class APIError(BaseModel):
     message: str
 
 
-class MagicLinkRequest(BaseModel):
-    email: EmailStr
-
-
-class MagicLinkVerifyRequest(BaseModel):
-    token: str = Field(min_length=32, max_length=512)
-
-
-class RefreshRequest(BaseModel):
-    refresh_token: str = Field(min_length=32, max_length=512)
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: Literal["bearer"] = "bearer"
-    expires_in: int
-
-
 class EntitlementResponse(BaseModel):
     feature: Literal["premium_all"] = "premium_all"
     status: Literal["active", "inactive"]
     plan: Literal["trial", "lifetime"] | None
-    valid_until: datetime | None
-    offline_until: datetime | None
-    signed_entitlement: str
-
-
-class AccountResponse(BaseModel):
-    developer_access: bool = False
-    id: str
-    masked_email: str
-    status: str
-    entitlement: EntitlementResponse
-    requires_recent_authentication: bool
+    valid_until: datetime | None = None
+    ownership_type: Literal["PURCHASED", "FAMILY_SHARED"]
+    access_token: str | None = None
+    expires_in: int = 900
 
 
 class VoiceCatalogItem(BaseModel):
@@ -92,7 +65,7 @@ class VoicePackDownloadResponse(BaseModel):
 
 
 class StoreTransactionRequest(BaseModel):
-    signed_transaction: str = Field(min_length=32)
+    signed_transaction: str = Field(min_length=32, max_length=32768)
 
 
 class AppStoreNotificationRequest(BaseModel):

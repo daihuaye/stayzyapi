@@ -13,68 +13,15 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-class User(Base):
-    __tablename__ = "users"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
-    status: Mapped[str] = mapped_column(String(24), default="active", index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-    sessions: Mapped[list[AuthSession]] = relationship(back_populates="user")
-
-
-class MagicLink(Base):
-    __tablename__ = "magic_links"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    email: Mapped[str] = mapped_column(String(320), index=True)
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    requested_ip_hash: Mapped[str] = mapped_column(String(64), index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
-    send_state: Mapped[str] = mapped_column(String(24), default="pending")
-    sendgrid_message_id: Mapped[str | None] = mapped_column(String(255), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
-
-    __table_args__ = (Index("ix_magic_links_email_created", "email", "created_at"),)
-
-
-class AuthSession(Base):
-    __tablename__ = "auth_sessions"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    family_id: Mapped[str] = mapped_column(String(36), index=True, default=lambda: str(uuid.uuid4()))
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    authenticated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    replaced_by_id: Mapped[str | None] = mapped_column(String(36))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    user: Mapped[User] = relationship(back_populates="sessions")
-
-
-class EmailDeliveryEvent(Base):
-    __tablename__ = "email_delivery_events"
-
-    id: Mapped[str] = mapped_column(String(255), primary_key=True)
-    sendgrid_message_id: Mapped[str | None] = mapped_column(String(255), index=True)
-    event: Mapped[str] = mapped_column(String(32))
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
 class StoreTransaction(Base):
     __tablename__ = "store_transactions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    transaction_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    transaction_id: Mapped[str] = mapped_column(String(128), index=True)
     original_transaction_id: Mapped[str] = mapped_column(String(128), index=True)
-    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    ownership_type: Mapped[str] = mapped_column(String(24), default="PURCHASED")
+    app_transaction_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    __table_args__ = (UniqueConstraint("environment", "transaction_id", name="uq_store_environment_transaction"),)
     billing_subject: Mapped[str] = mapped_column(String(64), index=True)
     product_id: Mapped[str] = mapped_column(String(160), index=True)
     environment: Mapped[str] = mapped_column(String(24))
@@ -85,20 +32,6 @@ class StoreTransaction(Base):
     apple_signed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     billing_grace_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
-class Entitlement(Base):
-    __tablename__ = "entitlements"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    feature_key: Mapped[str] = mapped_column(String(80), index=True)
-    source: Mapped[str] = mapped_column(String(32))
-    status: Mapped[str] = mapped_column(String(24), index=True)
-    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-    __table_args__ = (UniqueConstraint("user_id", "feature_key", name="uq_entitlement_feature"),)
 
 
 class VoiceDefinition(Base):

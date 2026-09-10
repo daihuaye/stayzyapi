@@ -29,6 +29,8 @@ class VerifiedStoreTransaction:
     expires_at: datetime | None
     revoked_at: datetime | None
     signed_at: datetime | None = None
+    ownership_type: str = "PURCHASED"
+    app_transaction_id: str | None = None
 
     @property
     def status(self) -> str:
@@ -149,7 +151,9 @@ class AppleStoreVerifier:
         try:
             info = await client.get_transaction_info(transaction.transaction_id)
             fresh = await self.verify_transaction(info.signedTransactionInfo)
-            if fresh.original_transaction_id != transaction.original_transaction_id or fresh.environment != transaction.environment:
+            if (fresh.transaction_id != transaction.transaction_id or fresh.original_transaction_id != transaction.original_transaction_id
+                    or fresh.environment != transaction.environment or fresh.product_id != transaction.product_id
+                    or fresh.ownership_type != transaction.ownership_type or fresh.app_transaction_id != transaction.app_transaction_id):
                 raise AppleVerificationFailed("Transaction lineage mismatch")
             return fresh
         except AppleVerificationFailed:
@@ -167,6 +171,9 @@ class AppleStoreVerifier:
             "originalPurchaseDate" if product_id == self.settings.trial_product_id else "purchaseDate", None))
         if not transaction_id or not original_id or not product_id or not purchased_at:
             raise AppleVerificationFailed("Apple transaction is missing required claims")
+        ownership = _text(getattr(decoded, "inAppOwnershipType", None))
+        if ownership not in {"PURCHASED", "FAMILY_SHARED"}:
+            raise AppleVerificationFailed("Missing or invalid ownership type")
         return VerifiedStoreTransaction(
             transaction_id=transaction_id,
             original_transaction_id=original_id,
@@ -177,4 +184,6 @@ class AppleStoreVerifier:
             expires_at=_milliseconds(getattr(decoded, "expiresDate", None)),
             revoked_at=_milliseconds(getattr(decoded, "revocationDate", None)),
             signed_at=_milliseconds(getattr(decoded, "signedDate", None)),
+            ownership_type=ownership,
+            app_transaction_id=_text(getattr(decoded, "appTransactionId", None)),
         )

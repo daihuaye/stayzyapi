@@ -14,13 +14,6 @@ class TokenError(ValueError):
     pass
 
 
-@dataclass(frozen=True)
-class AccessClaims:
-    user_id: str
-    session_id: str
-    authenticated_at: datetime
-
-
 def sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -55,69 +48,19 @@ class TokenSigner:
         self.signing_key = settings.jwt_private_key or settings.development_jwt_secret
         self.verification_key = settings.jwt_public_key or settings.development_jwt_secret
 
-    def access_token(self, user_id: str, session_id: str, authenticated_at: datetime) -> str:
+    def purchase_token(self, grant_id: str) -> str:
         now = datetime.now(UTC)
-        expires = now + timedelta(minutes=self.settings.access_token_minutes)
-        return jwt.encode(
-            {
-                "type": "access",
-                "sub": user_id,
-                "sid": session_id,
-                "auth_time": int(authenticated_at.timestamp()),
-                "iat": int(now.timestamp()),
-                "exp": int(expires.timestamp()),
-                "iss": "stayzy-api",
-                "aud": "stayzy-ios",
-            },
-            self.signing_key,
-            algorithm=self.algorithm,
-        )
+        return jwt.encode({"type": "purchase", "sub": grant_id, "iss": "stayzy-api",
+            "aud": "stayzy-purchases", "iat": now, "exp": now + timedelta(minutes=15)},
+            self.signing_key, algorithm=self.algorithm)
 
-    def entitlement_token(
-        self,
-        user_id: str,
-        status: str,
-        plan: str | None,
-        valid_until: datetime | None,
-        offline_until: datetime | None,
-    ) -> str:
-        now = datetime.now(UTC)
-        token_expiry = offline_until or (now + timedelta(minutes=5))
-        if token_expiry <= now:
-            token_expiry = now + timedelta(minutes=5)
-        return jwt.encode(
-            {
-                "type": "entitlement",
-                "sub": user_id,
-                "feature": "premium_all",
-                "status": status,
-                "plan": plan,
-                "valid_until": int(valid_until.timestamp()) if valid_until else None,
-                "offline_until": int(offline_until.timestamp()) if offline_until else None,
-                "iat": int(now.timestamp()),
-                "exp": int(token_expiry.timestamp()),
-                "iss": "stayzy-api",
-                "aud": "stayzy-ios",
-            },
-            self.signing_key,
-            algorithm=self.algorithm,
-        )
-
-    def decode_access(self, token: str) -> AccessClaims:
+    def decode_purchase(self, token: str) -> str:
         try:
-            payload = jwt.decode(
-                token,
-                self.verification_key,
-                algorithms=[self.algorithm],
-                audience="stayzy-ios",
-                issuer="stayzy-api",
-            )
-            if payload.get("type") != "access":
+            payload = jwt.decode(token, self.verification_key, algorithms=[self.algorithm],
+                audience="stayzy-purchases", issuer="stayzy-api",
+                options={"require": ["sub", "iat", "exp", "type"]})
+            if payload["type"] != "purchase" or not isinstance(payload["sub"], str):
                 raise TokenError("Wrong token type")
-            return AccessClaims(
-                user_id=str(payload["sub"]),
-                session_id=str(payload["sid"]),
-                authenticated_at=datetime.fromtimestamp(int(payload["auth_time"]), UTC),
-            )
+            return payload["sub"]
         except (jwt.PyJWTError, KeyError, TypeError, ValueError) as error:
-            raise TokenError("Invalid access token") from error
+            raise TokenError("Invalid purchase token") from error

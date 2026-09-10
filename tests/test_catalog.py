@@ -6,9 +6,9 @@ import pytest
 
 from sqlalchemy import select
 
-from app.models import AuthSession, CompanionDefinition, StoreTransaction, VoiceDefinition, VoicePackVersion
+from app.models import CompanionDefinition, StoreTransaction, VoiceDefinition, VoicePackVersion
 from app.security import TokenSigner
-from conftest import sign_in
+from test_account_free_purchases import exchange
 
 
 async def seed_catalog(session_factory) -> None:
@@ -83,24 +83,9 @@ async def test_catalog_is_provider_neutral_and_locked_for_guests(api_client, ses
 async def test_active_premium_can_download_pack(api_client, session_factory, settings, caplog, storage_available) -> None:
     client, _, email, storage, _ = api_client
     await seed_catalog(session_factory)
-    signed_in = await sign_in(client, email)
-    claims = TokenSigner(settings).decode_access(str(signed_in["access_token"]))
+    signed_in = await exchange(api_client, settings)
+    grant_id = TokenSigner(settings).decode_purchase(signed_in["access_token"])
     now = datetime.now(UTC)
-    async with session_factory() as db:
-        db.add(
-            StoreTransaction(
-                transaction_id="transaction-1",
-                original_transaction_id="original-1",
-                user_id=claims.user_id,
-                billing_subject="subject",
-                product_id=settings.lifetime_product_id,
-                environment="Sandbox",
-                status="active",
-                purchased_at=now,
-                expires_at=None,
-            )
-        )
-        await db.commit()
     storage.manifests["packs/willow.json"] = {
         "schemaVersion": 1,
         "voiceID": "voice_willow",
@@ -138,23 +123,14 @@ async def test_expired_trial_denies_download(
 ) -> None:
     client, _, email, _, _ = api_client
     await seed_catalog(session_factory)
-    signed_in = await sign_in(client, email)
-    claims = TokenSigner(settings).decode_access(str(signed_in["access_token"]))
+    signed_in = await exchange(api_client, settings)
+    grant_id = TokenSigner(settings).decode_purchase(signed_in["access_token"])
     now = datetime.now(UTC)
     async with session_factory() as db:
-        db.add(
-            StoreTransaction(
-                transaction_id="transaction-grace",
-                original_transaction_id="original-grace",
-                user_id=claims.user_id,
-                billing_subject="subject",
-                product_id=settings.trial_product_id,
-                environment="Sandbox",
-                status="expired",
-                purchased_at=now - timedelta(days=31),
-                expires_at=now - timedelta(days=1),
-            )
-        )
+        item = await db.get(StoreTransaction, grant_id)
+        item.product_id = settings.trial_product_id
+        item.purchased_at = now - timedelta(days=31)
+        item.status = "expired"
         await db.commit()
     headers = {"Authorization": f"Bearer {signed_in['access_token']}"}
 

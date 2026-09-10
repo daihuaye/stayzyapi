@@ -1,3 +1,5 @@
+> Current architecture: customers no longer sign in. See [Account-free purchases and migration](docs/ACCOUNT_FREE_PURCHASES.md). Historical customer-authentication setup below is superseded and must not be used for the account-free release. Administrator login remains separate.
+
 # Stayzy API
 
 FastAPI service for passwordless email authentication, App Store entitlements,

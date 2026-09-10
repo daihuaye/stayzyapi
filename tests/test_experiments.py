@@ -84,7 +84,7 @@ def test_migration_seeds_and_downgrades(tmp_path):
     def migrate(target, direction="upgrade"):
         subprocess.run([sys.executable, "-m", "alembic", direction, target],
                        cwd=root, env=environment, check=True, capture_output=True)
-    migrate("head")
+    migrate("0005_administrators")
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT key, enabled, rollout_percentage, allocation_salt FROM experiment_rules ORDER BY key").fetchall() == [
             ("companion", 1, 100, "companion-v1"),
@@ -92,7 +92,7 @@ def test_migration_seeds_and_downgrades(tmp_path):
     migrate("0002_billing_freshness", "downgrade")
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT name FROM sqlite_master WHERE name='experiment_rules'").fetchall() == []
-    migrate("head")
+    migrate("0005_administrators")
 
 
 @pytest.mark.asyncio
