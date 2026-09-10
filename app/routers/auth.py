@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.developer_access import has_developer_access
+
 from datetime import UTC, datetime, timedelta
 import logging
 
@@ -206,6 +208,7 @@ async def me(
     return AccountResponse(
         id=user.id,
         masked_email=mask_email(user.email),
+        developer_access=has_developer_access(user.email),
         status=user.status,
         entitlement=await entitlement_response(db, user.id, settings, signer),
         requires_recent_authentication=claims.authenticated_at < recent_cutoff,

@@ -40,6 +40,7 @@ class EntitlementResponse(BaseModel):
 
 
 class AccountResponse(BaseModel):
+    developer_access: bool = False
     id: str
     masked_email: str
     status: str
