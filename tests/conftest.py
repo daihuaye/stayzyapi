@@ -15,7 +15,7 @@ from app.config import Settings, get_settings
 from app.admin_models import Administrator, AdministratorLock
 from app.admin_security import hash_password
 from app.db import Base, get_db
-from app.routers import catalog, entitlements, health, iap
+from app.routers import catalog, entitlements, health, iap, telemetry
 from app.services.apple_store import VerifiedNotification, VerifiedStoreTransaction
 from app.services.email import EmailSendResult
 
@@ -118,6 +118,7 @@ async def api_client(
     from app.routers import experiments, admin
     app.include_router(admin.router)
     app.include_router(experiments.router)
+    app.include_router(telemetry.router)
     app.include_router(health.router)
     app.include_router(catalog.router)
     app.include_router(entitlements.router)

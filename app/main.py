@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import asyncio
+from contextlib import suppress
+from app.jobs.purge_telemetry import main as purge_telemetry
 
 from fastapi import FastAPI
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from app.observability import emit, install_diagnostics
-from app.routers import experiments, admin
+from app.routers import experiments, admin, telemetry
 from app.config import get_settings
 from app.routers import catalog, entitlements, health, iap
 from app.services.apple_store import AppleStoreVerifier
@@ -24,7 +27,20 @@ async def lifespan(app: FastAPI):
     app.state.email_sender = SendGridEmailSender(settings)
     app.state.storage = ObjectStorage(settings)
     app.state.apple_store_verifier = AppleStoreVerifier(settings)
-    yield
+    async def retention_loop():
+        while True:
+            try:
+                await purge_telemetry()
+            except Exception:
+                emit("telemetry.purge_failed")
+            await asyncio.sleep(86400)
+    retention_task = asyncio.create_task(retention_loop())
+    try:
+        yield
+    finally:
+        retention_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await retention_task
     await app.state.email_sender.close()
 
 
@@ -38,6 +54,7 @@ app = FastAPI(
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 install_diagnostics(app)
+app.include_router(telemetry.router)
 app.include_router(experiments.router)
 app.include_router(admin.router)
 app.include_router(health.router)

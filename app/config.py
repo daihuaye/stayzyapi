@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    telemetry_enabled: bool = True
+    telemetry_requests_per_minute: int = Field(default=120, ge=1, le=100000)
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="STAYZY_",
