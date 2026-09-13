@@ -87,3 +87,12 @@ def test_migration_round_trip():
             assert {"telemetry_events", "telemetry_sessions"}.issubset(inspect(connection).get_table_names())
             migration.downgrade()
             assert not inspect(connection).get_table_names()
+
+
+@pytest.mark.asyncio
+async def test_retired_experiment_telemetry_remains_compatible(api_client):
+    client, *_ = api_client
+    value = event(name="session.started", properties={"configuration": {"experiment_rive_character": True}})
+    response = await client.post("/v1/telemetry/events", json={"events": [value]})
+    assert response.status_code == 200
+    assert response.json()["accepted"] == [value["event_id"]]

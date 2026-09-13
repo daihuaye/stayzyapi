@@ -86,6 +86,7 @@ class Properties(Strict):
                    "maximum_simultaneous_requests", "recognition_model", "camera_position",
                    "recognition_match", "recognition_margin", "recognition_new", "recognition_confirm_seconds",
                    "recognition_sampling_seconds", "track_expiry_seconds", "companion_visible", "camera_preset", "analysis_mirrored"}
+        # Compatibility only: older clients may still report the retired Rive flight.
         if self.configuration and any(k not in allowed and k not in {"experiment_companion", "experiment_rive_character"} for k in self.configuration):
             raise ValueError("configuration field not registered")
         if self.part_index is not None and (self.part_count is None or self.part_index >= self.part_count):

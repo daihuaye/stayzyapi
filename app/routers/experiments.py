@@ -19,6 +19,9 @@ from app.observability import emit
 
 router = APIRouter(prefix="/v1", tags=["experiments"])
 
+# Retired keys cannot be published or recreated by administrators.
+RETIRED_EXPERIMENT_KEYS = frozenset({"rive_character"})
+
 
 class RuleResponse(BaseModel):
     enabled: bool
@@ -53,7 +56,7 @@ def serialize(rule: ExperimentRule) -> RuleResponse:
 @router.get("/experiments", response_model=ExperimentsResponse)
 async def experiments(response: Response, db: AsyncSession = Depends(get_db)) -> ExperimentsResponse:
     response.headers["Cache-Control"] = "no-store"
-    rows = (await db.scalars(select(ExperimentRule).order_by(ExperimentRule.key))).all()
+    rows = (await db.scalars(select(ExperimentRule).where(ExperimentRule.key.not_in(RETIRED_EXPERIMENT_KEYS)).order_by(ExperimentRule.key))).all()
     return ExperimentsResponse(rules={row.key: serialize(row) for row in rows})
 
 
@@ -69,6 +72,8 @@ async def update_experiment(key: str, body: RuleUpdate, response: Response,
                             principal: AdminPrincipal = Depends(require_administrator),
                             db: AsyncSession = Depends(get_db)) -> RuleResponse:
     response.headers["Cache-Control"] = "no-store"
+    if key in RETIRED_EXPERIMENT_KEYS:
+        raise api_error(404, "experiment_not_found", "Experiment is not registered.")
     rule = await db.scalar(select(ExperimentRule).where(ExperimentRule.key == key).with_for_update())
     if rule is None:
         raise api_error(404, "experiment_not_found", "Experiment is not registered.")
@@ -88,6 +93,8 @@ async def update_experiment(key: str, body: RuleUpdate, response: Response,
 async def create_experiment(body: RuleCreate, response: Response,
                             principal: AdminPrincipal = Depends(require_administrator),
                             db: AsyncSession = Depends(get_db)) -> RuleCreated:
+    if body.key in RETIRED_EXPERIMENT_KEYS:
+        raise api_error(422, "experiment_retired", "Experiment has been retired.")
     rule = ExperimentRule(key=body.key, enabled=body.enabled,
                           rollout_percentage=body.rolloutPercentage,
                           allocation_salt=secrets.token_hex(16))

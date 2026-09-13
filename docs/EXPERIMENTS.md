@@ -57,8 +57,7 @@ subsequent session. Session metadata shares the API-environment namespace.
 Companion off hides artwork and customization while keeping focus timing, camera
 detection, voice selection/playback, haptics, and saved preferences available.
 
-Debug builds retain `-StayzyDisableCompanion`, `STAYZY_COMPANION_ENABLED=0|1`,
-`-StayzyForceStaticCompanion`, and `STAYZY_COMPANION_FORCE_STATIC=1`. Explicit
+Debug builds retain `-StayzyDisableCompanion` and `STAYZY_COMPANION_ENABLED=0|1`. Explicit
 Debug settings win over remote rules; Release ignores these controls. UI-test
 fixtures use a fixed experiment provider and support the same Debug overrides.
 
@@ -87,27 +86,14 @@ immediate emergency shutdown; offline cache expiry returns to bundled defaults.
 No deployment, production rule update, or secret provisioning is performed by the
 implementation itself.
 
-## Rive character flight
+## Retired character flight
 
-`rive_character` independently gates Rive artwork, animated character choices in
-the Focus form, and the Avatar Credits entry in Settings. Its bundled default is
-off. Migration `0004_rive_character` seeds it disabled at 0%; `companion` remains
-on at 100% so static characters remain available.
+The `rive_character` experiment is retired. Migration `0010_retire_rive_character`
+removes its database row. Public and admin listings exclude the key, updates return
+`404 experiment_not_found`, and creation returns `422 experiment_retired`.
+Historical migrations remain intact; downgrading restores the rule disabled at 0%.
+The `companion` experiment continues to control native companion artwork.
 
-To roll out to 25% of installations, send an authenticated admin request:
-
-```http
-PUT /v1/admin/experiments/rive_character
-Content-Type: application/json
-Authorization: Bearer <administrator-session>
-
-{"enabled":true,"rolloutPercentage":25}
-```
-
-A stored Rive appearance falls back to the standard static character while this
-gate is off, without rewriting its saved ID. That same static fallback is marked
-selected in the Focus form. The Rive decision uses the existing frozen session
-snapshot, 10-minute refresh throttle, and 24-hour cache expiry. Snapshot metadata
-from older clients missing this key defaults it off. `companion=false` still hides
-all companion artwork. Debug testing can use `STAYZY_RIVE_CHARACTER_ENABLED=0|1`;
-Release builds ignore this override.
+Older clients may retain cached decisions until refresh. Telemetry still accepts
+`experiment_rive_character` for compatibility, but it does not enable a feature.
+Deploy the API migration before releasing the app that removes the runtime.
