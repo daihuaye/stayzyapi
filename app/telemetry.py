@@ -144,7 +144,9 @@ class TelemetryEvent(Base):
     payload: Mapped[dict] = mapped_column(JSON)
     __table_args__ = (Index("ix_telemetry_session", "installation_id", "session_id", "sequence"),
                      Index("ix_telemetry_usage", "environment", "name", "occurred_at"),
-                     Index("ix_telemetry_retention", "received_at"))
+                     Index("ix_telemetry_retention", "received_at"),
+                     Index("ix_telemetry_reporting_period", "environment", "occurred_at", "received_at"),
+                     Index("ix_telemetry_reporting_identity", "environment", "installation_id", "session_id", "sequence", "event_id"))
 class TelemetrySession(Base):
     __tablename__ = "telemetry_sessions"
     installation_id: Mapped[str] = mapped_column(String(36), primary_key=True)

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from app.observability import emit, install_diagnostics
-from app.routers import experiments, admin, telemetry
+from app.routers import experiments, admin, telemetry, admin_telemetry
 from app.config import get_settings
 from app.routers import catalog, entitlements, health, iap
 from app.services.apple_store import AppleStoreVerifier
@@ -55,6 +55,7 @@ app = FastAPI(
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 install_diagnostics(app)
 app.include_router(telemetry.router)
+app.include_router(admin_telemetry.router)
 app.include_router(experiments.router)
 app.include_router(admin.router)
 app.include_router(health.router)
