@@ -60,6 +60,8 @@ async def test_reconstruction_continuation_snapshots_and_totals(api_client, admi
         ev("app.usage", None, {"duration": 15, "foreground_seconds": 25, "screen": "focus"}, session=None))
     data = await get(api_client[0], admin_headers)
     assert data["summary"]["foreground_seconds"] == 25
+    assert data["screens"] == [{"label": "focus", "value": 25, "mean_progress": None}]
+    assert data["waits"] == [{"label": "acquiring", "value": 5, "mean_progress": None}]
     row = (await get(api_client[0], admin_headers, "sessions"))["items"][0]
     assert row["status"] == "inProgress" and row["totals"]["present_seconds"] == 30
     assert row["configuration"]["target_seconds"] == 100
@@ -100,6 +102,9 @@ async def test_funnel_cohorts_versions_and_health(api_client, admin_headers, ses
         ev("camera.started", 3, {"duration": 2}),
         ev("session.state", 4, {"state": "focused"}),
         ev("session.outcome", 5, {"status": "completed"}, age=.1),
+        ev("camera.error", 8, {"reason": "frame_silence", "count": 2}),
+        ev("camera.error", 9, {"reason": "frame_silence", "count": 3}),
+        ev("recognition.error", 10, {"reason": "unavailable"}),
         ev("camera.window", 6, {"samples": 2, "processing_ms": 20, "max_processing_ms": 15, "known_seconds": 10}),
         ev("camera.window", 7, {"samples": 8, "processing_ms": 160, "max_processing_ms": 40, "degraded_seconds": 5}),
         ev("session.started", 1, session=str(uuid4()), age=20),
@@ -111,6 +116,10 @@ async def test_funnel_cohorts_versions_and_health(api_client, admin_headers, ses
     assert health["summary"]["mean_processing_ms"] == 18
     assert health["summary"]["max_processing_ms"] == 40
     assert health["summary"]["startup_mean_seconds"] == 2
+    assert health["errors"] == [
+        {"name": "camera.error", "reason": "frame_silence", "count": 5},
+        {"name": "recognition.error", "reason": "unavailable", "count": 1},
+    ]
 
 
 async def test_identity_adoption_pagination_and_snapshot_cutoff(api_client, admin_headers, session_factory):
@@ -199,3 +208,43 @@ async def test_activity_version_filter_matches_diagnostic_version(api_client, ad
     result = await get(api_client[0], admin_headers, "sessions", activity="true", app_version="2", reason="frame_silence")
     assert result["items"][0]["session_id"] == S
     assert result["items"][0]["app_version"] == "1"
+
+
+async def test_reporting_postgres_json_grouping(session_factory):
+    """SQLite accepts mismatched JSON binds that PostgreSQL rejects."""
+    from sqlalchemy import event
+    from sqlalchemy.dialects.postgresql import asyncpg
+    from sqlalchemy.sql import visitors
+    from sqlalchemy.sql.elements import BinaryExpression, Label
+    from sqlalchemy.sql.selectable import Select
+
+    from app.telemetry_reporting import Window, health, overview
+
+    statements = []
+    async with session_factory() as db:
+        event.listen(db.sync_session, "do_orm_execute",
+                     lambda state: statements.append(state.statement))
+        w = Window(NOW - timedelta(days=7), NOW, NOW)
+        await overview(db, w)
+        await health(db, w)
+
+    checked = 0
+    for statement in statements:
+        for query in visitors.iterate(statement):
+            if not isinstance(query, Select):
+                continue
+            # Named binds expose parameter identity when rendering individual expressions.
+            compiler = query.compile(dialect=asyncpg.dialect(paramstyle="named"))
+            groups = [compiler.process(expr) for expr in query._group_by_clauses]
+            if groups:
+                for column in query.selected_columns:
+                    expr = column.element if isinstance(column, Label) else column
+                    if isinstance(expr, BinaryExpression):
+                        assert compiler.process(expr) in groups
+                        checked += 1
+            if query._distinct:
+                selected = [compiler.process(column) for column in query.selected_columns]
+                for expr in query._order_by_clauses:
+                    assert compiler.process(expr) in selected
+                    checked += 1
+    assert checked >= 7

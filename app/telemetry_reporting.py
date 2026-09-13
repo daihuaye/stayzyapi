@@ -179,11 +179,14 @@ async def overview(db, w):
         count_if(and_(e.name == "session.outcome", text(p, "status") == "completed")).label("completions"),
         count_if(and_(e.name == "session.outcome", text(p, "status") == "failed")).label("failures")
     ).where(*w.period(), or_(e.name.like("app.%"), e.name == "session.outcome")).group_by(day).order_by(day))
-    screens = await rows(db, select(text(p, "screen").label("label"), func.sum(num(p, "duration")).label("value")).where(*w.period(), e.name == "app.usage").group_by(text(p, "screen")))
+    # Reuse JSON expressions so PostgreSQL sees identical bind parameters in GROUP BY.
+    screen = text(p, "screen")
+    previous_state = text(p, "previous_state")
+    screens = await rows(db, select(screen.label("label"), func.sum(num(p, "duration")).label("value")).where(*w.period(), e.name == "app.usage").group_by(screen))
     outcomes = await rows(db, select(s.c.status.label("label"), func.count().label("value"), func.avg(num(s.c.totals, "progress")).label("mean_progress")).group_by(s.c.status))
-    waits = await rows(db, select(text(p, "previous_state").label("label"), func.sum(num(p, "duration")).label("value"))
-        .where(*w.period(), e.name == "session.state", text(p, "previous_state").in_(["permission_waiting", "camera_starting", "acquiring", "warming_up", "recovering", "manual_break", "relaunch_waiting"]))
-        .group_by(text(p, "previous_state")).order_by(func.sum(num(p, "duration")).desc()))
+    waits = await rows(db, select(previous_state.label("label"), func.sum(num(p, "duration")).label("value"))
+        .where(*w.period(), e.name == "session.state", previous_state.in_(["permission_waiting", "camera_starting", "acquiring", "warming_up", "recovering", "manual_break", "relaunch_waiting"]))
+        .group_by(previous_state).order_by(func.sum(num(p, "duration")).desc()))
     # Attempts form a separate cohort; access gates are branches, not required stages.
     a = e.payload["start_attempt_id"].as_string()
     cohort = select(e.installation_id.label("installation_id"), a.label("attempt_id")).where(*w.period(), e.name == "setup.start_tapped", a.is_not(None)).distinct().cte("attempts")
@@ -207,16 +210,19 @@ async def overview(db, w):
         p["revision"].as_integer().label("revision"), p["part_count"].as_integer().label("expected_parts"),
         func.row_number().over(partition_by=[e.installation_id, e.session_id], order_by=[e.sequence.desc(), e.event_id]).label("rn")
     ).where(*w.retained(), e.name == "session.outcome").cte("outcome_references")
-    parts = select(e.installation_id, e.session_id, p["snapshot_id"].as_string().label("snapshot_id"),
-        p["revision"].as_integer().label("revision"), func.count(func.distinct(p["part_index"].as_integer())).label("received_parts")
-    ).where(*w.retained(), e.name == "session.timeline").group_by(e.installation_id, e.session_id, p["snapshot_id"].as_string(), p["revision"].as_integer()).cte("parts")
+    snapshot_id = p["snapshot_id"].as_string()
+    revision = p["revision"].as_integer()
+    parts = select(e.installation_id, e.session_id, snapshot_id.label("snapshot_id"),
+        revision.label("revision"), func.count(func.distinct(p["part_index"].as_integer())).label("received_parts")
+    ).where(*w.retained(), e.name == "session.timeline").group_by(e.installation_id, e.session_id, snapshot_id, revision).cte("parts")
     o = outcome_rank.c
     coverage = outcome_rank.join(s, and_(s.c.installation_id == o.installation_id, s.c.session_id == o.session_id)).outerjoin(parts,
         and_(parts.c.installation_id == o.installation_id, parts.c.session_id == o.session_id, parts.c.snapshot_id == o.snapshot_id, parts.c.revision == o.revision))
     quality.update((await rows(db, select(func.count().label("expected_snapshots"),
         func.coalesce(count_if(or_(o.expected_parts.is_(None), func.coalesce(parts.c.received_parts, 0) < o.expected_parts)), 0).label("incomplete_snapshots"))
         .select_from(coverage).where(o.rn == 1, o.snapshot_id.is_not(None))))[0])
-    versions = (await db.scalars(select(e.payload["app_version"].as_string()).where(*w.retained()).distinct().order_by(e.payload["app_version"].as_string()).limit(200))).all()
+    app_version = e.payload["app_version"].as_string()
+    versions = (await db.scalars(select(app_version).where(*w.retained()).distinct().order_by(app_version).limit(200))).all()
     return {**w.meta(), "summary": {**summary, **usage}, "daily": daily, "screens": screens,
             "outcomes": outcomes, "waits": waits, "attempts": attempt_totals, "funnel": funnel,
             "permission_denials": denied, "setup_views": setup_views, "quality": quality, "app_versions": versions}
@@ -247,8 +253,9 @@ async def health(db, w):
     daily = [finalize(r) for r in await rows(db, select(day.label("day"), *metrics()).where(*w.period(), e.name.like("camera.%")).group_by(day).order_by(day))]
     v = e.payload["app_version"].as_string()
     versions = [finalize(r) for r in await rows(db, select(v.label("app_version"), *metrics()).where(*w.period()).group_by(v).order_by(v))]
-    errors = await rows(db, select(e.name.label("name"), text(p, "reason").label("reason"), func.sum(func.coalesce(num(p, "count"), 1)).label("count"))
-        .where(*w.period(), e.name.in_(["camera.error", "recognition.error"])).group_by(e.name, text(p, "reason")).order_by(func.sum(func.coalesce(num(p, "count"), 1)).desc()))
+    reason = text(p, "reason")
+    errors = await rows(db, select(e.name.label("name"), reason.label("reason"), func.sum(func.coalesce(num(p, "count"), 1)).label("count"))
+        .where(*w.period(), e.name.in_(["camera.error", "recognition.error"])).group_by(e.name, reason).order_by(func.sum(func.coalesce(num(p, "count"), 1)).desc()))
     diagnostics = await rows(db, select(e.installation_id, e.session_id, e.occurred_at, e.name, text(p, "reason").label("reason"))
         .where(*w.period(), e.name.in_(["camera.error", "recognition.error", "camera.recovered"])).order_by(e.occurred_at.desc(), e.event_id).limit(25))
     return {**w.meta(), "summary": summary, "daily": daily, "versions": versions, "errors": errors, "diagnostics": diagnostics}
