@@ -143,3 +143,30 @@ async def test_expired_trial_denies_download(
     )
     assert download.status_code == 403
     assert download.json()["detail"]["code"] == "premium_required"
+
+
+async def test_harbor_is_free_to_catalog_and_download(api_client, session_factory):
+    client, _, _, storage, _ = api_client
+    await seed_catalog(session_factory)
+    async with session_factory() as db:
+        db.add(VoiceDefinition(id="voice_harbor", display_name="Harbor", description="Steady",
+            tier="premium", supported_locales=["en-US"], provider="private-provider",
+            provider_voice_id="private", model="private", instructions="private",
+            instruction_version="v1", status="active", sort_order=2))
+        db.add(VoicePackVersion(voice_id="voice_harbor", locale="en-US", catalog_version="catalog-1",
+            version="nova", archive_object_key="packs/harbor.zip", manifest_object_key="packs/harbor.json",
+            sha256="a" * 64, size_bytes=1234, status="active"))
+        await db.commit()
+    storage.manifests["packs/harbor.json"] = {"schemaVersion": 1, "voiceID": "voice_harbor", "files": {}}
+    catalog = await client.get("/v1/catalog/voices?locale=en-US")
+    harbor = next(v for v in catalog.json()["voices"] if v["id"] == "voice_harbor")
+    assert harbor["tier"] == "free"
+    assert harbor["is_locked"] is False
+    download = await client.post("/v1/voice-packs/voice_harbor/download", json={"locale": "en-US"})
+    assert download.status_code == 200
+    assert download.json()["voice_id"] == "voice_harbor"
+    assert download.json()["sha256"] == "a" * 64
+    unavailable = await client.post("/v1/voice-packs/voice_harbor/download", json={"locale": "fr-FR"})
+    assert unavailable.status_code == 404
+    premium = await client.post("/v1/voice-packs/voice_willow/download", json={"locale": "en-US"})
+    assert premium.status_code == 401

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
 from app.db import get_db
-from app.dependencies import optional_grant, require_grant
+from app.dependencies import optional_grant
 from app.errors import api_error
 from app.observability import emit
 from app.models import StoreTransaction, CompanionDefinition, VoiceDefinition, VoicePackVersion
@@ -70,8 +70,8 @@ async def voices(
                 name=definition.display_name,
                 description=definition.description,
                 locale=locale,
-                tier=definition.tier,
-                is_locked=definition.tier == "premium" and not premium,
+                tier="free" if definition.id == "voice_harbor" else definition.tier,
+                is_locked=definition.id != "voice_harbor" and definition.tier == "premium" and not premium,
                 preview_url=preview_url,
                 pack_version=pack.version if pack else None,
                 download_bytes=pack.size_bytes if pack else None,
@@ -113,15 +113,20 @@ async def authorize_voice_pack_download(
     voice_id: str,
     body: VoicePackDownloadRequest,
     request: Request,
-    grant: StoreTransaction = Depends(require_grant),
+    grant: StoreTransaction | None = Depends(optional_grant),
     db: AsyncSession = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> VoicePackDownloadResponse:
-    state = entitlement_state(grant, settings)
-    emit("voice_download.entitlement_checked", allowed=state.permits_download,
-         status=state.status, plan=state.plan)
-    if not state.permits_download:
-        raise api_error(403, "premium_required", "An active Premium purchase is required.")
+    if voice_id == "voice_harbor":
+        emit("voice_download.entitlement_checked", allowed=True, status="free", plan=None)
+    else:
+        if grant is None:
+            raise api_error(401, "purchase_required", "Restore Purchases to check your access.")
+        state = entitlement_state(grant, settings)
+        emit("voice_download.entitlement_checked", allowed=state.permits_download,
+             status=state.status, plan=state.plan)
+        if not state.permits_download:
+            raise api_error(403, "premium_required", "An active Premium purchase is required.")
     definition = await db.scalar(
         select(VoiceDefinition).where(VoiceDefinition.id == voice_id, VoiceDefinition.status == "active")
     )
