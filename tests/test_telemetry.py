@@ -31,6 +31,41 @@ async def test_retries_and_reordering(api_client, session_factory):
         assert summary.summary["properties"]["status"] == "completed"
         assert await db.scalar(select(func.count()).select_from(TelemetryEvent)) == 2
 
+
+async def test_piano_play_time_persistence_and_reordering(api_client, session_factory):
+    progress = event(properties={"task": "Piano_Practice", "status": "inProgress",
+                                 "piano_play_seconds": 0})
+    outcome = {**progress, "event_id": str(uuid4()), "name": "session.outcome", "sequence": 2,
+               "properties": {"task": "Piano_Practice", "status": "completed",
+                              "present_seconds": 10, "piano_play_seconds": 42.5}}
+    response = await api_client[0].post("/v1/telemetry/events", json={"events": [outcome, progress]})
+    assert response.status_code == 200
+    assert response.json()["accepted"] == [outcome["event_id"], progress["event_id"]]
+    assert response.json()["rejected"] == []
+    async with session_factory() as db:
+        stored_progress = await db.get(TelemetryEvent, progress["event_id"])
+        stored_outcome = await db.get(TelemetryEvent, outcome["event_id"])
+        assert stored_progress.payload["properties"]["piano_play_seconds"] == 0
+        assert stored_outcome.payload["properties"]["piano_play_seconds"] == 42.5
+        summary = await db.scalar(select(TelemetrySession))
+        assert summary.sequence == 2
+        assert summary.summary["properties"]["piano_play_seconds"] == 42.5
+
+
+@pytest.mark.parametrize("seconds", [-1, 1e12 + 1, "NaN", "Infinity", "-Infinity"])
+async def test_invalid_piano_play_time_is_rejected(api_client, session_factory, seconds):
+    invalid = event(properties={"task": "Piano_Practice", "status": "inProgress",
+                                "piano_play_seconds": seconds})
+    legacy = event(properties={"task": "Piano_Practice", "status": "inProgress"})
+    response = await api_client[0].post("/v1/telemetry/events", json={"events": [invalid, legacy]})
+    assert response.status_code == 200
+    assert response.json()["accepted"] == [legacy["event_id"]]
+    assert response.json()["rejected"] == [{"event_id": invalid["event_id"], "reason": "invalid_event"}]
+    async with session_factory() as db:
+        assert await db.get(TelemetryEvent, invalid["event_id"]) is None
+        stored = await db.get(TelemetryEvent, legacy["event_id"])
+        assert "piano_play_seconds" not in stored.payload["properties"]
+
 async def test_partial_validation_and_privacy(api_client):
     good = event()
     invalid = [event(properties={"task_name": "secret"}), event(properties={"configuration": {"name": "private"}}),

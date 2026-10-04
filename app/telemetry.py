@@ -39,6 +39,7 @@ class Properties(Strict):
     last_interaction_at: Number | None = None
     target_seconds: Number | None = None
     present_seconds: Number | None = None
+    piano_play_seconds: Number | None = None
     away_seconds: Number | None = None
     break_seconds: Number | None = None
     manual_seconds: Number | None = None
