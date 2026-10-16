@@ -45,6 +45,30 @@ async def test_auth_filters_and_empty(api_client, admin_headers):
     assert (await get(client, admin_headers, "health"))["summary"]["mean_processing_ms"] is None
 
 
+async def test_piano_ingestion_reaches_session_reports_without_summing_checkpoints(api_client, admin_headers):
+    client = api_client[0]
+    progress = ev("session.progress", 1, {"status": "inProgress", "present_seconds": 10,
+        "piano_play_seconds": 12.5, "piano_tracking_status": "playing"}).payload
+    outcome = ev("session.outcome", 2, {"status": "completed", "present_seconds": 20,
+        "piano_play_seconds": 42.5, "piano_tracking_status": "paused"}).payload
+    legacy_session = str(uuid4())
+    legacy = ev("session.outcome", 1, {"status": "completed"}, session=legacy_session).payload
+    response = await client.post("/v1/telemetry/events", json={"events": [outcome, progress, legacy]})
+    assert response.status_code == 200
+    assert response.json()["rejected"] == []
+    report_params = params(as_of=datetime.now(UTC).isoformat())
+    listing = await client.get("/v1/admin/telemetry/sessions", headers=admin_headers, params=report_params)
+    assert listing.status_code == 200
+    rows = {row["session_id"]: row for row in listing.json()["items"]}
+    assert rows[S]["totals"]["piano_play_seconds"] == 42.5
+    assert rows[S]["totals"]["piano_tracking_status"] == "paused"
+    assert "piano_play_seconds" not in rows[legacy_session]["totals"]
+    detail = await client.get(f"/v1/admin/telemetry/sessions/{I}/{S}", headers=admin_headers, params=report_params)
+    assert detail.status_code == 200
+    assert detail.json()["session"]["totals"]["piano_play_seconds"] == 42.5
+    assert detail.json()["outcomes"][0]["properties"]["piano_tracking_status"] == "paused"
+
+
 async def test_reconstruction_continuation_snapshots_and_totals(api_client, admin_headers, session_factory):
     snapshot = str(uuid4())
     await seed(session_factory,

@@ -40,6 +40,7 @@ class Properties(Strict):
     target_seconds: Number | None = None
     present_seconds: Number | None = None
     piano_play_seconds: Number | None = None
+    piano_tracking_status: Literal["notTracked", "listening", "playing", "paused", "permissionDenied", "unavailable", "needsValidation"] | None = None
     away_seconds: Number | None = None
     break_seconds: Number | None = None
     manual_seconds: Number | None = None

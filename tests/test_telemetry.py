@@ -66,6 +66,20 @@ async def test_invalid_piano_play_time_is_rejected(api_client, session_factory, 
         stored = await db.get(TelemetryEvent, legacy["event_id"])
         assert "piano_play_seconds" not in stored.payload["properties"]
 
+
+@pytest.mark.parametrize("status", ["notTracked", "listening", "playing", "paused", "permissionDenied", "unavailable", "needsValidation"])
+async def test_piano_tracking_status_is_registered(api_client, status):
+    value = event(properties={"status": "inProgress", "piano_play_seconds": 0, "piano_tracking_status": status})
+    response = await api_client[0].post("/v1/telemetry/events", json={"events": [value]})
+    assert response.json()["accepted"] == [value["event_id"]]
+
+
+async def test_piano_tracking_status_rejects_arbitrary_text(api_client):
+    value = event(properties={"status": "inProgress", "piano_tracking_status": "private user content"})
+    response = await api_client[0].post("/v1/telemetry/events", json={"events": [value]})
+    assert response.json()["accepted"] == []
+    assert response.json()["rejected"][0]["reason"] == "invalid_event"
+
 async def test_partial_validation_and_privacy(api_client):
     good = event()
     invalid = [event(properties={"task_name": "secret"}), event(properties={"configuration": {"name": "private"}}),
