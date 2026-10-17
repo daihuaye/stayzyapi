@@ -106,7 +106,7 @@ EVENTS = {
 class Event(Strict):
     event_id: UUID
     name: str
-    version: Literal[1]
+    version: Literal[1, 2]
     installation_id: UUID
     app_run_id: UUID
     session_id: UUID | None = None
@@ -126,6 +126,11 @@ class Event(Strict):
         if self.name not in EVENTS: raise ValueError("unknown event")
         if self.session_id is not None and self.sequence is None: raise ValueError("session sequence required")
         if self.name.startswith("session.") and self.session_id is None: raise ValueError("session required")
+        if self.version == 2 and self.name == "session.state":
+            if not self.properties.state or self.properties.state == self.properties.previous_state:
+                raise ValueError("state transition required")
+            if self.properties.duration is None or self.properties.status is None:
+                raise ValueError("state duration and summary status required")
         if self.name == "session.timeline" and any(getattr(self.properties, k) is None for k in ("snapshot_id", "revision", "part_index", "part_count", "intervals")):
             raise ValueError("timeline metadata required")
         if self.name in {"session.progress", "session.outcome"} and self.properties.status is None:

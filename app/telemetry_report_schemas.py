@@ -67,6 +67,7 @@ class SessionReport(BaseModel):
     error_count: int | float
     run_count: int
     possible_drop_off: bool
+    totals_updated_at: datetime | None = None
     totals: dict[str, Any]
     timeline: SnapshotReport | None = None
 
@@ -82,6 +83,7 @@ class EventPage(ReportMeta):
 
 
 class SessionDetail(ReportMeta):
+    transitions: list[dict[str, Any]] = []
     session: SessionReport
     configuration_changes: list[dict[str, Any]]
     outcomes: list[dict[str, Any]]

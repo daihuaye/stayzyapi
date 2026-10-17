@@ -83,7 +83,7 @@ async def test_piano_tracking_status_rejects_arbitrary_text(api_client):
 async def test_partial_validation_and_privacy(api_client):
     good = event()
     invalid = [event(properties={"task_name": "secret"}), event(properties={"configuration": {"name": "private"}}),
-        event(name="unregistered"), event(version=2), event(properties={"duration": -1}),
+        event(name="unregistered"), event(version=3), event(properties={"duration": -1}),
         event(name="session.timeline", properties={"part_count": 0}), event(session_id=None)]
     result = (await api_client[0].post("/v1/telemetry/events", json={"events": [good, *invalid]})).json()
     assert result["accepted"] == [good["event_id"]]
@@ -145,3 +145,16 @@ async def test_retired_experiment_telemetry_remains_compatible(api_client):
     response = await client.post("/v1/telemetry/events", json={"events": [value]})
     assert response.status_code == 200
     assert response.json()["accepted"] == [value["event_id"]]
+
+
+async def test_v2_state_requires_real_change_and_deduplicates_retries(api_client):
+    changed = event(name="session.state", properties={"state": "focused", "previous_state": "warming_up",
+                    "status": "inProgress", "duration": 5, "piano_play_seconds": 12})
+    changed["version"] = 2
+    response = await api_client[0].post("/v1/telemetry/events", json={"events": [changed, changed]})
+    assert response.json()["accepted"] == [changed["event_id"]]
+    assert response.json()["duplicates"] == [changed["event_id"]]
+    changed["event_id"] = str(uuid4())
+    changed["properties"]["previous_state"] = "focused"
+    response = await api_client[0].post("/v1/telemetry/events", json={"events": [changed]})
+    assert response.json()["rejected"]

@@ -272,3 +272,39 @@ async def test_reporting_postgres_json_grouping(session_factory):
                     assert compiler.process(expr) in selected
                     checked += 1
     assert checked >= 7
+
+
+async def test_v2_transitions_supply_totals_without_timeline_snapshots(api_client, admin_headers, session_factory):
+    start = ev("session.started", 1)
+    focused = ev("session.state", 2, {"state": "focused", "previous_state": "warming_up", "duration": 5,
+                  "status": "inProgress", "present_seconds": 0, "piano_play_seconds": 10})
+    away = ev("session.state", 3, {"state": "away", "previous_state": "focused", "duration": 20,
+               "status": "inProgress", "present_seconds": 20, "piano_play_seconds": 30})
+    for event in [start, focused, away]:
+        event.payload["version"] = 2
+    await seed(session_factory, away, start, focused)
+    data = await get(api_client[0], admin_headers, f"sessions/{I}/{S}")
+    assert [e["properties"]["state"] for e in data["transitions"]] == ["focused", "away"]
+    assert data["session"]["totals"]["piano_play_seconds"] == 30
+    assert data["session"]["totals"]["present_seconds"] == 20
+    assert data["session"]["totals_updated_at"] is not None
+    assert data["selected_snapshot"] is None
+    assert data["snapshots"] == []
+
+
+async def test_v2_outcome_totals_override_filtered_transition_totals(api_client, admin_headers, session_factory):
+    focused = ev("session.state", 2, {"state": "focused", "duration": 0,
+        "status": "inProgress", "present_seconds": 0, "piano_play_seconds": 0})
+    away = ev("session.state", 3, {"state": "away", "previous_state": "focused", "duration": 120,
+        "status": "inProgress", "present_seconds": 10, "piano_play_seconds": 8})
+    outcome = ev("session.outcome", 4, {"status": "completed", "present_seconds": 12,
+        "uncertain_seconds": 2, "piano_play_seconds": 9, "piano_tracking_status": "paused"})
+    for event in [focused, away, outcome]:
+        event.payload["version"] = 2
+    await seed(session_factory, outcome, away, focused)
+    data = await get(api_client[0], admin_headers, f"sessions/{I}/{S}")
+    assert [e["properties"]["state"] for e in data["transitions"]] == ["focused", "away"]
+    assert data["session"]["totals"]["present_seconds"] == 12
+    assert data["session"]["totals"]["piano_play_seconds"] == 9
+    assert data["session"]["totals"]["uncertain_seconds"] == 2
+    assert data["session"]["status"] == "completed"

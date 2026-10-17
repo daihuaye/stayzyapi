@@ -96,7 +96,7 @@ def session_query(w: Window, cohort=True):
     start = latest_row("creation", Event.name.in_(["session.started", "session.adopted"]), True)
     latest = latest_row("lifecycle", Event.name.in_(["session.started", "session.adopted", "session.resumed", "session.state", "session.progress", "session.outcome"]))
     state = latest_row("state", Event.name == "session.state")
-    progress = latest_row("progress", Event.name.in_(["session.progress", "session.outcome"]))
+    progress = latest_row("progress", or_(Event.name.in_(["session.progress", "session.outcome"]), and_(Event.name == "session.state", Event.payload["version"].as_integer() == 2)))
     joined = aggregate
     for alias, chosen in joins:
         joined = joined.outerjoin(alias, alias.c.event_id == chosen)
@@ -112,7 +112,7 @@ def session_query(w: Window, cohort=True):
     q = select(aggregate, created.label("created_at"), version.label("app_version"),
         start.c.name.label("creation_event"), start.c.payload.label("start_context"), config.label("configuration"),
         config["tracks_participants"].as_boolean().label("buddy_tracking"),
-        status.label("status"), state_name.label("state"), progress.c.payload["properties"].label("totals"),
+        status.label("status"), state_name.label("state"), progress.c.payload["properties"].label("totals"), progress.c.occurred_at.label("totals_updated_at"),
         and_(status == "inProgress", func.coalesce(state_name, "unknown") != "manual_break",
              aggregate.c.last_activity <= w.as_of - timedelta(hours=24),
              aggregate.c.last_received <= w.as_of - timedelta(hours=24)).label("possible_drop_off")
@@ -381,18 +381,21 @@ async def session_detail(db, w, installation_id, session_id):
         e.session_id == session_id, e.name != "session.timeline").order_by(e.sequence, e.event_id))
     configuration_changes, outcomes, epochs, state_intervals, checkpoints, markers = [], [], {}, [], [], []
     raw_states = {}
+    transitions = []
     async for event in result:
         p = event.payload["properties"]
         at = utc(event.occurred_at).timestamp()
         record = {"event_id": event.event_id, "sequence": event.sequence, "occurred_at": utc(event.occurred_at),
                   "name": event.name, "run_index": event.payload.get("run_index", 0), "properties": p}
+        if event.name == "session.state" and event.payload.get("version") == 2:
+            transitions.append(record)
         if event.name == "session.configuration_changed":
             configuration_changes.append(record)
         if event.name == "session.outcome":
             outcomes.append(record)
-        if event.name in {"session.progress", "session.outcome"}:
+        if event.name in {"session.progress", "session.outcome"} or (event.name == "session.state" and event.payload.get("version") == 2):
             checkpoints.append({"at": at, "progress": p.get("progress"), "present_seconds": p.get("present_seconds"), "sequence": event.sequence})
-        if event.name == "session.state" and p.get("duration") is not None:
+        if event.name == "session.state" and p.get("duration") is not None and p.get("previous_state") is not None:
             interval = {"id": event.event_id, "kind": p.get("previous_state", "unknown"), "started_at": at - p["duration"], "ended_at": at, "duration": p["duration"], "lane": "state"}
             raw_states[event.event_id] = interval
             if state_intervals and state_intervals[-1]["kind"] == interval["kind"] and abs(state_intervals[-1]["ended_at"] - interval["started_at"]) < 0.05:
@@ -447,7 +450,7 @@ async def session_detail(db, w, installation_id, session_id):
             "outcomes": outcomes, "epochs": list(epochs.values()), "state_intervals": state_intervals,
             "checkpoints": checkpoints, "checkpoint_count": checkpoint_count,
             "markers": markers[-500:], "marker_count": marker_count,
-            "snapshots": timeline, "selected_snapshot": selected}
+            "snapshots": timeline, "selected_snapshot": selected, "transitions": transitions}
 
 
 async def session_events(db, w, installation_id, session_id, limit=50, cursor=None):
