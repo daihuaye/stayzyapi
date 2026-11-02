@@ -228,4 +228,4 @@ owner bootstrap/recovery, SendGrid configuration, and the token-login cutover.
 
 ## Anonymous telemetry
 
-`POST /v1/telemetry/events` accepts bounded, versioned batches without purchase authentication. `GET /v1/telemetry/config` exposes the collection kill switch. Apply migration 0008 before shipping the client. See [Telemetry](Docs/TELEMETRY.md) and [operator reporting queries](Docs/TELEMETRY_QUERIES.sql).
+`POST /v1/telemetry/events` accepts bounded, versioned batches without purchase authentication. `GET /v1/telemetry/config` exposes the collection kill switch. Apply migration 0008 before shipping the client. See [Telemetry](docs/TELEMETRY.md), [administrator reporting](docs/TELEMETRY_DASHBOARD.md), and [operator reporting queries](docs/TELEMETRY_QUERIES.sql).

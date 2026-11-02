@@ -382,11 +382,18 @@ async def session_detail(db, w, installation_id, session_id):
     configuration_changes, outcomes, epochs, state_intervals, checkpoints, markers = [], [], {}, [], [], []
     raw_states = {}
     transitions = []
+    piano_checkpoints = []
     async for event in result:
         p = event.payload["properties"]
         at = utc(event.occurred_at).timestamp()
         record = {"event_id": event.event_id, "sequence": event.sequence, "occurred_at": utc(event.occurred_at),
                   "name": event.name, "run_index": event.payload.get("run_index", 0), "properties": p}
+        if p.get("piano_play_seconds") is not None:
+            # Keep every piano observation, including progress/outcome events and v1 clients.
+            # Downsampling cumulative values would erase the time windows between them.
+            piano_checkpoints.append({"at": at, "sequence": event.sequence,
+                "run_index": record["run_index"], "seconds": p["piano_play_seconds"],
+                "tracking_status": p.get("piano_tracking_status")})
         if event.name == "session.state" and event.payload.get("version") == 2:
             transitions.append(record)
         if event.name == "session.configuration_changed":
@@ -450,7 +457,8 @@ async def session_detail(db, w, installation_id, session_id):
             "outcomes": outcomes, "epochs": list(epochs.values()), "state_intervals": state_intervals,
             "checkpoints": checkpoints, "checkpoint_count": checkpoint_count,
             "markers": markers[-500:], "marker_count": marker_count,
-            "snapshots": timeline, "selected_snapshot": selected, "transitions": transitions}
+            "snapshots": timeline, "selected_snapshot": selected, "transitions": transitions,
+            "piano_checkpoints": piano_checkpoints}
 
 
 async def session_events(db, w, installation_id, session_id, limit=50, cursor=None):

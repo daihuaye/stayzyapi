@@ -84,6 +84,7 @@ class EventPage(ReportMeta):
 
 class SessionDetail(ReportMeta):
     transitions: list[dict[str, Any]] = []
+    piano_checkpoints: list[dict[str, Any]] = []
     session: SessionReport
     configuration_changes: list[dict[str, Any]]
     outcomes: list[dict[str, Any]]
