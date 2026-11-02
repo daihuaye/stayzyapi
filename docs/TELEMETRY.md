@@ -41,7 +41,7 @@ The outbox/quarantine budget is 20 MiB or seven days. Routine samples are evicte
 1. Deploy backend migration `0008_telemetry`, then API routes, then the iOS build. No production deployment is performed by this change.
 2. `STAYZY_TELEMETRY_ENABLED=false` activates the kill switch. `STAYZY_TELEMETRY_REQUESTS_PER_MINUTE` defaults to 120 per direct peer per worker. Configure trusted ingress/global rate limiting for multi-worker deployments; installation IDs are untrusted correlation, not authentication.
 3. Raw events and session projections expire after 90 days. The API runs the idempotent purge at startup and daily. `python -m app.jobs.purge_telemetry` is also available for a scheduler; duplicate runs are safe.
-4. Use `Docs/TELEMETRY_QUERIES.sql` in stayzyapi with an operator read-only database role. No public read endpoint or dashboard is added. Reports filter production traffic explicitly.
+4. Use `docs/TELEMETRY_QUERIES.sql` in stayzyapi with an operator read-only database role, or the authenticated [administrator dashboard](TELEMETRY_DASHBOARD.md). There is no public telemetry-read endpoint. Reports filter production traffic explicitly.
 5. Monitor accepted/duplicate/rejected counts, event delivery lag, missing outcome/timeline parts, queue drops and purge failures. Investigate incomplete data rather than reporting it as zero usage.
 6. Before release, verify physical-device camera permissions, process termination, interruptions, thermal pressure, sustained capture and analytics overhead. Review App Store privacy disclosures to reflect anonymous analytics. Simulator tests cannot validate real camera accuracy or thermal behavior.
 

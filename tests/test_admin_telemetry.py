@@ -308,3 +308,38 @@ async def test_v2_outcome_totals_override_filtered_transition_totals(api_client,
     assert data["session"]["totals"]["piano_play_seconds"] == 9
     assert data["session"]["totals"]["uncertain_seconds"] == 2
     assert data["session"]["status"] == "completed"
+
+
+async def test_piano_checkpoints_preserve_v1_progress_and_v2_state_observations(api_client, admin_headers, session_factory):
+    start = ev("session.started", 1)
+    progress = ev("session.progress", 2, {"piano_play_seconds": 12.5, "piano_tracking_status": "playing"})
+    transition = ev("session.state", 3, {"state": "away", "piano_play_seconds": 20})
+    transition.payload["version"] = 2
+    outcome = ev("session.outcome", 4, {"status": "completed", "piano_play_seconds": 42.5,
+                                           "piano_tracking_status": "paused"})
+    await seed(session_factory, outcome, transition, start, progress)
+    data = await get(api_client[0], admin_headers, f"sessions/{I}/{S}")
+    points = data["piano_checkpoints"]
+    assert [p["seconds"] for p in points] == [12.5, 20, 42.5]
+    assert [p["sequence"] for p in points] == [2, 3, 4]
+    assert points[0]["at"] == progress.occurred_at.timestamp()
+    assert points[0]["run_index"] == 0
+    assert points[-1]["tracking_status"] == "paused"
+
+
+async def test_piano_observations_are_not_downsampled_with_progress(api_client, admin_headers, session_factory):
+    await seed(session_factory, *(ev("session.progress", i, {"piano_play_seconds": i}) for i in range(1, 503)))
+    data = await get(api_client[0], admin_headers, f"sessions/{I}/{S}")
+    assert data["checkpoint_count"] == 502
+    assert len(data["checkpoints"]) == 500
+    assert len(data["piano_checkpoints"]) == 502
+
+
+async def test_piano_checkpoints_preserve_zero_and_run_index_but_omit_null(api_client, admin_headers, session_factory):
+    zero = ev("session.progress", 1, {"piano_play_seconds": 0})
+    missing = ev("session.progress", 2, {"piano_play_seconds": None})
+    resumed = ev("session.progress", 3, {"piano_play_seconds": 8})
+    resumed.payload["run_index"] = 2
+    await seed(session_factory, resumed, missing, zero)
+    data = await get(api_client[0], admin_headers, f"sessions/{I}/{S}")
+    assert [(p["seconds"], p["run_index"]) for p in data["piano_checkpoints"]] == [(0, 0), (8, 2)]
